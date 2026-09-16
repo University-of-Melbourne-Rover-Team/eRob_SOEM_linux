@@ -42,7 +42,7 @@ static std::atomic<int32_t> commanded_position{0};
 static std::atomic<bool> have_command{false};
 
 static constexpr const char* SOCKET_PATH =
-    "/tmp/csp.sock";
+    "../tmp/csp.sock";
 
 // Global variables for EtherCAT communication
 char IOmap[4096]; // I/O mapping for EtherCAT

@@ -9,7 +9,7 @@
 #include <cerrno>
 
 static constexpr const char* SOCKET_PATH =
-    "/tmp/csp.sock";
+    "../tmp/erob_csp.sock";
 
 int main(int argc, char* argv[])
 {
