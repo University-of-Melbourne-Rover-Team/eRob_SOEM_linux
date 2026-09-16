@@ -180,7 +180,7 @@ int erob_test() {
     // 1. Call ec_config_init() to move from INIT to PRE-OP state.
     printf("__________STEP 1___________________\n");
     // Initialize EtherCAT master on the specified network interface
-    if (ec_init("enp6s0") <= 0) {
+    if (ec_init("enp89s0") <= 0) {
         printf("Error: Could not initialize EtherCAT master!\n");
         printf("No socket connection on Ethernet port. Execute as root.\n");
         printf("___________________________________________\n");

@@ -136,6 +136,8 @@ int erob_test();
 uint16_t data_R;
 
 int erob_test() {
+    // Have to wait 8 seconds after power before sending commands (p.g. 46).
+
     int rdl; // Variable to hold read data length
     SLAVE_ID = 1; // Set the slave ID to 1
     int i, j, oloop, iloop, chk; // Loop control variables
@@ -143,7 +145,7 @@ int erob_test() {
     // 1. Call ec_config_init() to move from INIT to PRE-OP state.
     printf("__________STEP 1___________________\n");
     // Initialize EtherCAT master on the specified network interface
-    if (ec_init("enp6s0") <= 0) {
+    if (ec_init("enp89s0") <= 0) {
         printf("Error: Could not initialize EtherCAT master!\n");
         printf("No socket connection on Ethernet port. Execute as root.\n");
         printf("___________________________________________\n");
@@ -410,10 +412,12 @@ int erob_test() {
 
     // Start the EtherCAT thread for real-time processing
     start_ecatthread_thread = TRUE; // Flag to indicate that the EtherCAT thread should start
-    osal_thread_create_rt(&thread1, stack64k * 2, (void *)&ecatthread, (void *)&ctime_thread); // Create the real-time EtherCAT thread
+    osal_thread_create_rt(&thread1, stack64k * 2, (void *)&ecatthread, /*param=*/(void *)&ctime_thread); // Create the real-time EtherCAT thread
     // set_thread_affinity(*thread1, 4); // Optional: Set CPU affinity for the thread
     osal_thread_create(&thread2, stack64k * 2, (void *)&ecatcheck, NULL); // Create the EtherCAT check thread
     // set_thread_affinity(*thread2, 5); // Optional: Set CPU affinity for the thread
+    printf("wait one second before step 8 ... \n");
+    osal_usleep(1000000);
     printf("___________________________________________\n");
 
     my_RA = 0; // Reset read access variable
@@ -444,6 +448,7 @@ int erob_test() {
     // Read and display the state of all slaves
     ec_readstate(); // Read the state of all slaves
     for (int i = 1; i <= ec_slavecount; i++) {
+        printf("Alstatuscode = 0x%04X : %s," "wkc=%d/%d\n", ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode), wkc, expectedWKC);
         printf("Slave %d: Type %d, Address 0x%02x, State Machine actual %d, required %d\n", 
                i, ec_slave[i].eep_id, ec_slave[i].configadr, ec_slave[i].state, EC_STATE_OPERATIONAL); // Print slave information
         printf("Name: %s\n", ec_slave[i].name); // Print the name of the slave
@@ -636,6 +641,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr) {
  * the specified cycle time.
  */
 OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
+    int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
     int ht;
     int64 cycletime;
@@ -645,13 +651,13 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     long cycle_time_ns;
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    ht = (ts.tv_nsec / 1000000) + 1;
-    ts.tv_nsec = ht * 1000000;
+    ht = (ts.tv_nsec / 1'000'000) + 1;
+    ts.tv_nsec = ht * 1'000'000;
     if (ts.tv_nsec >= NSEC_PER_SEC) {
         ts.tv_sec++;
         ts.tv_nsec -= NSEC_PER_SEC;
     }
-    cycletime = *(int *)ptr * 1000;
+    cycletime = *ctime * 1000;
 
     toff = 0;
     dorun = 0;
@@ -720,7 +726,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     rxpdo.target_velocity = 0;
                 } else {
                     rxpdo.controlword = 0x000F;
-                    rxpdo.target_velocity = 5000;  // Set target velocity to 1000 counts/s
+                    rxpdo.target_velocity = 10000;  // Set target velocity to 1000 counts/s
                 }
                 rxpdo.mode_of_operation = 9;  // CSV mode
 
