@@ -30,7 +30,6 @@
 #include <sched.h>
 
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <unistd.h>
 #include <atomic>
 #include <sys/socket.h>
@@ -98,28 +97,26 @@ typedef struct {
     int16_t actual_torque;    // 0x6077:0, 16 bits
 } __attribute__((__packed__)) txpdo_t;
 
-// Add these global variables after the other global declarations
-volatile int target_position = 0;
-pthread_mutex_t target_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t target_position_cond = PTHREAD_COND_INITIALIZER;
-bool target_updated = false;
-int32_t received_target = 0;
-
 // Add in the global variable declaration section at the beginning of the file
 rxpdo_t rxpdo;  // Global variable, used for sending data to slaves
 txpdo_t txpdo;  // Global variable, used for receiving data from slaves
 
-// 在全局变量区域添加
-struct MotorStatus {
-    bool is_operational;
-    uint16_t status_word;
-    int32_t actual_position;
-    int32_t actual_velocity;
-    int16_t actual_torque;
-} motor_status;
-
-
-void update_motor_status(int slave_id);  // Add function declaration
+// The cyclic thread never waits for status readers or terminal output.
+struct CycleStatus {
+    uint16_t statusword = 0;
+    int32_t actual_position = 0;
+    int32_t target_position = 0;
+    int32_t destination_position = 0;
+    int cycle_number = 0;
+    int32_t actual_velocity = 0;
+    int16_t actual_torque = 0;
+    int workcounter = 0;
+    long cycle_ns = 0;
+    unsigned overruns = 0;
+    unsigned sleep_errors = 0;
+};
+static CycleStatus cycle_status;
+static pthread_mutex_t status_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Function to handle the command socket thread
 void* command_socket_thread(void* arg);
@@ -130,40 +127,23 @@ void* command_socket_thread(void* arg);
 
 // 在全局变量声明区域添加
 struct MotionPlanner {
-    int32_t start_position;    // Start position
-    int32_t target_position;   // Final target position
-    int32_t smooth_target;     // Smoothed target position for transition
-    int32_t current_position;  // Current planned position
-    double current_velocity;   // Current velocity
-    double start_time;         // Start time
-    double total_time;         // Total time
-    double current_time;       // Current time
-    bool is_moving;            // Movement state
-    
-    // Motion parameters
-    static constexpr double MAX_VELOCITY = 50000.0;     // Maximum velocity limit
-    static constexpr double CYCLE_TIME = 0.0005;          // Cycle time (1ms)
-    static constexpr double SMOOTH_FACTOR = 0.002;        // Smoothing factor for target position
+    bool initialized = false;
+    int32_t target_position = 0;
+    double current_position = 0.0; // Keep fractional counts between cycles.
+    double current_velocity = 0.0;
 
-    // Quintic polynomial coefficients
-    double a0, a1, a2, a3, a4, a5;
-
-    MotionPlanner() : start_position(0), target_position(0), smooth_target(0),
-                      current_position(0), current_velocity(0.0),
-                      start_time(0.0), total_time(0.0), current_time(0.0),
-                      is_moving(false) {}
+    static constexpr double MAX_VELOCITY = 50000.0;     // counts/s
+    static constexpr double MAX_ACCELERATION = 50000.0; // counts/s^2
+    static constexpr double BRAKE_DECEL = 5000.0;       // counts/s^2
 };
 
-// Define static member variables
 constexpr double MotionPlanner::MAX_VELOCITY;
-constexpr double MotionPlanner::CYCLE_TIME;
-constexpr double MotionPlanner::SMOOTH_FACTOR;
+constexpr double MotionPlanner::MAX_ACCELERATION;
+constexpr double MotionPlanner::BRAKE_DECEL;
 
-// Global variable
 MotionPlanner g_motion_planner;
-
-// Function declaration
-int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position);
+int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position,
+                        double cycle_seconds);
 
 //##################################################################################################
 // Function: Set the CPU affinity for a thread
@@ -506,7 +486,16 @@ int erob_test() {
         }
   // The main loop only needs to keep the program running
         while(1) {
-            osal_usleep(100000); // Sleep for 100ms to reduce CPU usage
+            osal_usleep(100000);
+            pthread_mutex_lock(&status_mutex);
+            const CycleStatus status = cycle_status;
+            pthread_mutex_unlock(&status_mutex);
+            printf("Status: cycle=%d, SW=0x%04X, pos=%d, target=%d, goal=%d, vel=%d, torque=%d, "
+                   "WKC=%d/%d, cycle=%ld ns, overruns=%u, sleep_errors=%u\n",
+                   status.cycle_number, status.statusword, status.actual_position,
+                   status.target_position, status.destination_position, status.actual_velocity, status.actual_torque,
+                   status.workcounter, expectedWKC, status.cycle_ns,
+                   status.overruns, status.sleep_errors);
         }
     }
 
@@ -673,8 +662,8 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     dorun = 0;
     
     // Initialize PDO data
-    rxpdo_t rxpdo;
-    txpdo_t txpdo;
+    rxpdo_t rxpdo{};
+    txpdo_t txpdo{};
     
     rxpdo.controlword = 0x0080;
     rxpdo.target_position = 0;
@@ -688,8 +677,8 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     ec_send_processdata();
 
     int step = 0;
-    bool need_update = false;
-    int32_t new_target = 0;
+    unsigned cycle_overruns = 0;
+    unsigned sleep_errors = 0;
 
     while (1) {
         clock_gettime(CLOCK_MONOTONIC, &cycle_start);
@@ -698,9 +687,8 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
         if (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, &tleft) != 0) {
             // If sleep is interrupted, record the error
             missed_cycles++;
-            printf("WARNING: Clock sleep interrupted, missed cycles: %d\n", missed_cycles);
+            ++sleep_errors;
             if (missed_cycles >= MAX_MISSED_CYCLES) {
-                printf("ERROR: Too many missed cycles, attempting recovery...\n");
                 // Reset the counter
                 missed_cycles = 0;
                 // Resynchronize the clock
@@ -727,15 +715,6 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     memcpy(&txpdo, ec_slave[slave].inputs, sizeof(txpdo_t));
                 }
 
-                // Check if there is a new target position
-                pthread_mutex_lock(&target_mutex);
-                need_update = target_updated;
-                if (need_update) {
-                    new_target = received_target;
-                    target_updated = false;
-                }
-                pthread_mutex_unlock(&target_mutex);
-
                 // State machine control
                 if (step <= 400) {
                     rxpdo.controlword = 0x0080;
@@ -750,31 +729,20 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     rxpdo.controlword = 0x000F;
                     rxpdo.target_position = txpdo.actual_position;
                 } else {
-                    // Normal operational mode
-                    if (need_update) {
-                        g_motion_planner.target_position = new_target;
-                        g_motion_planner.is_moving = true;
-                    }
-
-                    // Execute trajectory planning
-                    int32_t planned_pos = plan_trajectory(&g_motion_planner, txpdo.actual_position);
-                    
-                    // Update output PDO
                     rxpdo.controlword = 0x000F;
                     rxpdo.mode_of_operation = 8;
 
-                    // Use the planned position for the target position
-                    if (have_command.load(std::memory_order_acquire))
-                    {
-                        rxpdo.target_position =
-                            commanded_position.load(
-                                std::memory_order_relaxed
-                            );
-                    }
-                    else
-                    {
-                        rxpdo.target_position =
-                            txpdo.actual_position;
+                    if (have_command.load(std::memory_order_acquire)) {
+                        // Replace the destination every cycle. Preserve the
+                        // current trajectory position/velocity when retargeting.
+                        g_motion_planner.target_position =
+                            commanded_position.load(std::memory_order_relaxed);
+                        rxpdo.target_position = plan_trajectory(
+                            &g_motion_planner, txpdo.actual_position,
+                            static_cast<double>(cycletime) / NSEC_PER_SEC);
+                    } else {
+                        rxpdo.target_position = txpdo.actual_position;
+                        g_motion_planner.initialized = false;
                     }
                 }
 
@@ -783,19 +751,9 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     memcpy(ec_slave[slave].outputs, &rxpdo, sizeof(rxpdo_t));
                 }
 
-                // Print status information every 100 cycles
-                if (dorun % 100 == 0) {
-                    printf("Status: pos=%d, target=%d, vel=%d, torque=%d\n",
-                           txpdo.actual_position, rxpdo.target_position,
-                           txpdo.actual_velocity, txpdo.actual_torque);
-                }
-
                 if (step < 1200) {
                     step++;
                 }
-            } else {
-                printf("WARNING: Working counter error (wkc: %d, expected: %d)\n", 
-                       wkc, expectedWKC);
             }
 
             // Clock synchronization
@@ -812,9 +770,24 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
         cycle_time_ns = (cycle_end.tv_sec - cycle_start.tv_sec) * NSEC_PER_SEC +
                        (cycle_end.tv_nsec - cycle_start.tv_nsec);
         
-        if (cycle_time_ns > cycletime * 1.5) {
-            printf("WARNING: Cycle time exceeded: %ld ns (expected: %ld ns)\n", 
-                   cycle_time_ns, cycletime);
+        if (cycle_time_ns > cycletime * 1.5)
+            ++cycle_overruns;
+
+        // Skip publication if the main thread is copying the previous sample.
+        if (pthread_mutex_trylock(&status_mutex) == 0) {
+            cycle_status.statusword = txpdo.statusword;
+            cycle_status.actual_position = txpdo.actual_position;
+            cycle_status.target_position = rxpdo.target_position;
+            cycle_status.destination_position = have_command.load(std::memory_order_acquire)
+                ? commanded_position.load(std::memory_order_relaxed) : rxpdo.target_position;
+            cycle_status.cycle_number = dorun;
+            cycle_status.actual_velocity = txpdo.actual_velocity;
+            cycle_status.actual_torque = txpdo.actual_torque;
+            cycle_status.workcounter = wkc;
+            cycle_status.cycle_ns = cycle_time_ns;
+            cycle_status.overruns = cycle_overruns;
+            cycle_status.sleep_errors = sleep_errors;
+            pthread_mutex_unlock(&status_mutex);
         }
     }
 }
@@ -825,171 +798,42 @@ int test_count_sum = 100;
 int test_count = 0;
 float correct_rate = 0;
 
-// Helper function for clamping values
-template<typename T>
-T clamp(T value, T min_val, T max_val) {
-    if (value < min_val) return min_val;
-    if (value > max_val) return max_val;
-    return value;
-}
-
-// Smooth target position update with reduced computation
-int32_t update_smooth_target(MotionPlanner* planner) {
-    int32_t position_diff = planner->target_position - planner->smooth_target;
-    
-    // Simple linear interpolation
-    int32_t position_increment = position_diff * planner->SMOOTH_FACTOR;
-    
-    // Update smooth target position
-    planner->smooth_target += position_increment;
-    
-    return planner->smooth_target;
-}
-
-// Optimized trajectory planning with reduced computational load
-int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position) {
-    // Initialize on first start
-    if (!planner->is_moving) {
-        planner->start_position = actual_position;
+// Advance one CSP setpoint using the real PDO period. The socket thread only
+// publishes a destination; this function never waits for a move to finish.
+int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position,
+                        double cycle_seconds) {
+    if (!planner->initialized) {
         planner->current_position = actual_position;
-        planner->smooth_target = actual_position;
         planner->current_velocity = 0.0;
-        planner->is_moving = true;
+        planner->initialized = true;
     }
-    
-    int32_t target = planner->target_position;
-    double pos_error = target - planner->current_position;
-    
-    // If very close to target, use simple proportional control
-    if (fabs(pos_error) < 1.0) {
-        planner->current_position = target;
+
+    const double error = static_cast<double>(planner->target_position) -
+                         planner->current_position;
+    if (fabs(error) < 0.5 &&
+        fabs(planner->current_velocity) <= planner->MAX_ACCELERATION * cycle_seconds) {
+        planner->current_position = planner->target_position;
         planner->current_velocity = 0.0;
-        planner->is_moving = false;
-        return target;
+        return planner->target_position;
     }
-    
-    // --- Trajectory planning modification ---
-    // To make braking more gradual, use a distance-based speed calculation for deceleration control.
-    // The formula used is: v_max = sqrt(2 * BRAKE_DECEL * d)
-    // The smaller the BRAKE_DECEL, the lower the allowed speed, resulting in a slower braking effect.
-    const double BRAKE_DECEL = 5000.0;  // Deceleration rate for braking (adjustable), the smaller the value, the slower the braking
-    double allowed_speed = sqrt(2.0 * BRAKE_DECEL * fabs(pos_error));
-    
-    // Target velocity cannot exceed maximum velocity or allowed braking speed
-    double desired_vel = fmin(planner->MAX_VELOCITY, allowed_speed);
-    desired_vel = copysign(desired_vel, pos_error);  // Ensure direction is correct
-    
-    // Limit acceleration rate to prevent rapid velocity changes
-    double vel_error = desired_vel - planner->current_velocity;
-    double max_vel_change = planner->MAX_VELOCITY * planner->CYCLE_TIME;  // Maintain original acceleration limit
-    if (fabs(vel_error) > max_vel_change) {
-        planner->current_velocity += copysign(max_vel_change, vel_error);
-    } else {
-        planner->current_velocity = desired_vel;
-    }
-    
-    // Update position based on current velocity
-    planner->current_position += planner->current_velocity * planner->CYCLE_TIME;
-    // --- end modification ---
-    
-    // Debug info (reduced frequency)
-    if ((dorun % 1000) == 0) {
-        printf("Planned Trajectory: Pos: %.1f, Target: %d, Vel: %.1f\n",
-               planner->current_position, target, planner->current_velocity);
-    }
-    
-    return static_cast<int32_t>(planner->current_position);
+
+    const double allowed_speed = sqrt(2.0 * planner->BRAKE_DECEL * fabs(error));
+    const double desired_velocity =
+        copysign(fmin(planner->MAX_VELOCITY, allowed_speed), error);
+    const double velocity_error = desired_velocity - planner->current_velocity;
+    const double max_velocity_change = planner->MAX_ACCELERATION * cycle_seconds;
+    const double previous_velocity = planner->current_velocity;
+    planner->current_velocity +=
+        fmax(-max_velocity_change, fmin(max_velocity_change, velocity_error));
+    planner->current_position +=
+        0.5 * (previous_velocity + planner->current_velocity) * cycle_seconds;
+
+    // Keep rounding and conversion inside the signed 32-bit PDO range.
+    planner->current_position = fmax(static_cast<double>(INT32_MIN),
+                                    fmin(static_cast<double>(INT32_MAX),
+                                         planner->current_position));
+    return static_cast<int32_t>(llround(planner->current_position));
 }
-
-// Add the server function before erob_test()
-void* start_server(void* arg) {
-    int port = *(int*)arg;
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-    int opt = 1;
-    int addrlen = sizeof(address);
-    char buffer[1024] = {0};
-
-    // Create socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        std::cerr << "Socket creation failed" << std::endl;
-        return nullptr;
-    }
-
-    // Set socket options
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        std::cerr << "Failed to set socket options" << std::endl;
-        return nullptr;
-    }
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(port);
-
-    // Bind socket
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        std::cerr << "Binding failed" << std::endl;
-        return nullptr;
-    }
-
-    // Listen for connections
-    if (listen(server_fd, 3) < 0) {
-        std::cerr << "Listening failed" << std::endl;
-        return nullptr;
-    }
-
-    std::cout << "Server started, waiting for connection on port " << port << "..." << std::endl;
-    
-    if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-        std::cerr << "Failed to accept connection" << std::endl;
-        return nullptr;
-    }
-    std::cout << "Client connected!" << std::endl;
-
-    // Receive data
-    while (true) {
-        int valread = read(new_socket, buffer, 1024);
-        if (valread > 0) {
-            try {
-                std::cout << "\nReceived raw data: " << buffer << std::endl;
-                int32_t new_target = std::stoi(buffer);
-                
-                pthread_mutex_lock(&target_mutex);
-                received_target = new_target;
-                target_updated = true;
-                std::cout << "Set new target position: " << new_target << std::endl;
-                std::cout << "Update flag set to: " << target_updated << std::endl;
-                pthread_mutex_unlock(&target_mutex);
-            } catch (const std::exception& e) {
-                std::cerr << "Data conversion error: " << e.what() << std::endl;
-            }
-            memset(buffer, 0, sizeof(buffer));
-        } else if (valread == 0) {
-            std::cout << "Client disconnected" << std::endl;
-            break;
-        } else {
-            std::cerr << "Read error: " << strerror(errno) << std::endl;
-        }
-    }
-
-    close(new_socket);
-    close(server_fd);
-    std::cout << "Server closed" << std::endl;
-    return nullptr;
-}
-
-// Function to update motor status information
-void update_motor_status(int slave_id) {
-    // Update status information from TXPDO
-    motor_status.status_word = txpdo.statusword;
-    motor_status.actual_position = txpdo.actual_position;
-    motor_status.actual_velocity = txpdo.actual_velocity;
-    motor_status.actual_torque = txpdo.actual_torque;
-    
-    // Check status word to determine if motor is operational
-    // Bits 0-3 should be 0111 for enabled and ready state
-    motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
-}
-
 
 // Command socket thread function
 void* command_socket_thread(void*) {
@@ -1045,10 +889,20 @@ void* command_socket_thread(void*) {
                 sock,
                 &target,
                 sizeof(target),
-                0
+                MSG_TRUNC
             );
 
-        if (received == sizeof(target))
+        if (received < 0) {
+            if (errno == EINTR)
+                continue;
+            perror("recv");
+            break; // A permanent error must not turn into a busy loop.
+        }
+        if (received != static_cast<ssize_t>(sizeof(target))) {
+            fprintf(stderr, "Ignoring command: expected one int32_t target.\n");
+            continue;
+        }
+
         {
             commanded_position.store(
                 target,
@@ -1060,10 +914,7 @@ void* command_socket_thread(void*) {
                 std::memory_order_release
             );
 
-            printf(
-                "New target position: %d\n",
-                target
-            );
+            // The main thread reports the goal; never wait for terminal output here.
         }
     }
 
@@ -1081,10 +932,10 @@ int main(int argc, char **argv) {
     dorun = 0;
     ctime_thread = 1000; // 1ms cycle time
 
-    // Set a higher real-time priority
-    struct sched_param param;
-    param.sched_priority = 99; // Maximum real-time priority
-    if (sched_setscheduler(0, SCHED_FIFO, &param) == -1) {
+    // Configuration, status printing, and command input use normal scheduling.
+    // osal_thread_create_rt() requests FIFO priority 40 for the cyclic thread.
+    struct sched_param param{};
+    if (sched_setscheduler(0, SCHED_OTHER, &param) == -1) {
         perror("sched_setscheduler failed");
     }
 
@@ -1103,36 +954,29 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    // Start the server thread with lower priority
-    pthread_t server_thread;
-    pthread_attr_t attr;
-    struct sched_param server_param;
-
+    // Explicit normal scheduling keeps command input below the cyclic thread,
+    // even if the creator's scheduling policy is changed later.
     pthread_t socket_thread;
-    
-    pthread_attr_init(&attr);
-    pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
-    server_param.sched_priority = 0;
-    pthread_attr_setschedparam(&attr, &server_param);
-    
-    if (pthread_create(
-            &socket_thread,
-            nullptr,
-            command_socket_thread,
-            nullptr
-        ) != 0)
-    {
-        perror("pthread_create");
-        return -1;
-    }
-
-    int port = 8080;
-    if (pthread_create(&server_thread, &attr, start_server, &port) != 0) {
-        std::cerr << "Failed to create server thread" << std::endl;
+    pthread_attr_t attr;
+    int thread_error = pthread_attr_init(&attr);
+    if (thread_error != 0) {
+        fprintf(stderr, "pthread_attr_init: %s\n", strerror(thread_error));
         return EXIT_FAILURE;
     }
-    
+
+    struct sched_param socket_priority{};
+    thread_error = pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
+    if (thread_error == 0)
+        thread_error = pthread_attr_setschedparam(&attr, &socket_priority);
+    if (thread_error == 0)
+        thread_error = pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    if (thread_error == 0)
+        thread_error = pthread_create(&socket_thread, &attr, command_socket_thread, nullptr);
     pthread_attr_destroy(&attr);
+    if (thread_error != 0) {
+        fprintf(stderr, "Cannot create command socket thread: %s\n", strerror(thread_error));
+        return EXIT_FAILURE;
+    }
 
     printf("Running on CPU core 3\n");
     erob_test();

@@ -6,9 +6,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <cerrno>
 
 static constexpr const char* SOCKET_PATH =
-    "/tmp/erob_csp.sock";
+    "/tmp/csp.sock";
 
 int main(int argc, char* argv[])
 {
@@ -22,10 +23,15 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    int32_t target =
-        static_cast<int32_t>(
-            std::stol(argv[1])
-        );
+    char* end = nullptr;
+    errno = 0;
+    const long long value = std::strtoll(argv[1], &end, 10);
+    if (errno == ERANGE || end == argv[1] || *end != '\0' ||
+        value < INT32_MIN || value > INT32_MAX) {
+        std::cerr << "Target must be an integer in the signed 32-bit range.\n";
+        return 1;
+    }
+    const int32_t target = static_cast<int32_t>(value);
 
     int sock =
         socket(AF_UNIX, SOCK_DGRAM, 0);
