@@ -356,7 +356,6 @@ int erob_test() {
         printf("Slave %d: Type %d, Address 0x%02x, State Machine actual %d, required %d\n", 
                i, ec_slave[i].eep_id, ec_slave[i].configadr, ec_slave[i].state, EC_STATE_INIT);
         printf("___________________________________________\n");
-        ecx_dcsync0(&ecx_context, i, TRUE, 1000000, 0);  //Synchronize the distributed clock for the slave
     }
 
     // Map the configured PDOs to the IOmap
@@ -374,6 +373,13 @@ int erob_test() {
 
     // Configure Distributed Clock (DC)
     ec_configdc(); // Set up the distributed clock for synchronization
+
+    // Configure SYNC0 after the DC clocks and offsets have been initialized.
+    for (int i = 1; i <= ec_slavecount; i++) {
+        if (ec_slave[i].hasdc) {
+            ecx_dcsync0(&ecx_context, i, TRUE, 1000000, 0);
+        }
+    }
 
     // Request to switch to SAFE-OP state
     ec_slave[0].state = EC_STATE_SAFE_OP; // Set the first slave to SAFE-OP state
