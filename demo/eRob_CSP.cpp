@@ -490,12 +490,9 @@ int erob_test() {
             pthread_mutex_lock(&status_mutex);
             const CycleStatus status = cycle_status;
             pthread_mutex_unlock(&status_mutex);
-            printf("Status: cycle=%d, SW=0x%04X, pos=%d, target=%d, goal=%d, vel=%d, torque=%d, "
-                   "WKC=%d/%d, cycle=%ld ns, overruns=%u, sleep_errors=%u\n",
+            printf("Status: cycle=%d, SW=0x%04X, pos=%d, target=%d, goal=%d, vel=%d\n",
                    status.cycle_number, status.statusword, status.actual_position,
-                   status.target_position, status.destination_position, status.actual_velocity, status.actual_torque,
-                   status.workcounter, expectedWKC, status.cycle_ns,
-                   status.overruns, status.sleep_errors);
+                   status.target_position, status.destination_position, status.actual_velocity);
         }
     }
 
