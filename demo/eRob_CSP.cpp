@@ -32,6 +32,18 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <atomic>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <cerrno>
+
+
+static std::atomic<int32_t> commanded_position{0};
+static std::atomic<bool> have_command{false};
+
+static constexpr const char* SOCKET_PATH =
+    "/tmp/csp.sock";
 
 // Global variables for EtherCAT communication
 char IOmap[4096]; // I/O mapping for EtherCAT
@@ -108,6 +120,9 @@ struct MotorStatus {
 
 
 void update_motor_status(int slave_id);  // Add function declaration
+
+// Function to handle the command socket thread
+void* command_socket_thread(void* arg);
 
 // 在文件开头，其他宏定义之后添加
 #undef MAX_VELOCITY  // Ensure there are no naming conflicts
@@ -746,8 +761,21 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     
                     // Update output PDO
                     rxpdo.controlword = 0x000F;
-                    rxpdo.target_position = txpdo.actual_position + 20;
                     rxpdo.mode_of_operation = 8;
+
+                    // Use the planned position for the target position
+                    if (have_command.load(std::memory_order_acquire))
+                    {
+                        rxpdo.target_position =
+                            commanded_position.load(
+                                std::memory_order_relaxed
+                            );
+                    }
+                    else
+                    {
+                        rxpdo.target_position =
+                            txpdo.actual_position;
+                    }
                 }
 
                 // Send PDO data to the slaves
@@ -962,6 +990,89 @@ void update_motor_status(int slave_id) {
     motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
 }
 
+
+// Command socket thread function
+void* command_socket_thread(void*) {
+    int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+
+    // Check if socket creation was successful
+    if (sock < 0) {
+        perror("socket");
+        return nullptr;
+    }
+
+    // Specify this is a UNIX socket
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+
+    // Use strncpy to safely copy the socket path into the address structure
+    strncpy(
+        addr.sun_path,
+        SOCKET_PATH,
+        sizeof(addr.sun_path) - 1
+    );
+
+    // Null-terminate the socket path
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    // Remove old socket file if previous program exited badly
+    unlink(SOCKET_PATH);
+
+
+    // Bind the socket to the specified path
+    if (bind(
+            sock,
+            reinterpret_cast<sockaddr*>(&addr),
+            sizeof(addr)
+        ) < 0)
+    {
+        perror("bind");
+        close(sock);
+        return nullptr;
+    }
+
+    printf(
+        "CSP command socket listening at %s\n",
+        SOCKET_PATH
+    );
+
+    while (1)
+    {
+        int32_t target;
+
+        ssize_t received =
+            recv(
+                sock,
+                &target,
+                sizeof(target),
+                0
+            );
+
+        if (received == sizeof(target))
+        {
+            commanded_position.store(
+                target,
+                std::memory_order_relaxed
+            );
+
+            have_command.store(
+                true,
+                std::memory_order_release
+            );
+
+            printf(
+                "New target position: %d\n",
+                target
+            );
+        }
+    }
+
+    close(sock);
+    unlink(SOCKET_PATH);
+
+    return nullptr;
+}
+
 // Modify the main function to start the server thread
 int main(int argc, char **argv) {
     needlf = FALSE;
@@ -996,12 +1107,25 @@ int main(int argc, char **argv) {
     pthread_t server_thread;
     pthread_attr_t attr;
     struct sched_param server_param;
+
+    pthread_t socket_thread;
     
     pthread_attr_init(&attr);
     pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
     server_param.sched_priority = 0;
     pthread_attr_setschedparam(&attr, &server_param);
     
+    if (pthread_create(
+            &socket_thread,
+            nullptr,
+            command_socket_thread,
+            nullptr
+        ) != 0)
+    {
+        perror("pthread_create");
+        return -1;
+    }
+
     int port = 8080;
     if (pthread_create(&server_thread, &attr, start_server, &port) != 0) {
         std::cerr << "Failed to create server thread" << std::endl;
