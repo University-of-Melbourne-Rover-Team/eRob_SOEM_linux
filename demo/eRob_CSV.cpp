@@ -89,29 +89,32 @@ pthread_cond_t target_position_cond = PTHREAD_COND_INITIALIZER;
 bool target_updated = false;
 int32_t received_target = 0;
 
-rxpdo_t rxpdo;  // Global variable, used for sending data to slaves
-txpdo_t txpdo;  // Global variable, used for receiving data from slaves
+/** 
+ * MotorStatus and update_motor_status() not used
+ * To do:
+ *  - use this code
+ * */
 
-struct MotorStatus {
-    bool is_operational;
-    uint16_t status_word;
-    int32_t actual_position;
-    int32_t actual_velocity;
-    int16_t actual_torque;
-} motor_status;
+// struct MotorStatus {
+//     bool is_operational;
+//     uint16_t status_word;
+//     int32_t actual_position;
+//     int32_t actual_velocity;
+//     int16_t actual_torque;
+// } motor_status;
 
-// Function to update motor status information
-void update_motor_status(int slave_id) {
-    // Update status information from TXPDO
-    motor_status.status_word = txpdo.statusword;
-    motor_status.actual_position = txpdo.actual_position;
-    motor_status.actual_velocity = txpdo.actual_velocity;
-    motor_status.actual_torque = txpdo.actual_torque;
+// // Function to update motor status information
+// void update_motor_status(int slave_id) {
+//     // Update status information from TXPDO
+//     motor_status.status_word = txpdo.statusword;
+//     motor_status.actual_position = txpdo.actual_position;
+//     motor_status.actual_velocity = txpdo.actual_velocity;
+//     motor_status.actual_torque = txpdo.actual_torque;
     
-    // Check status word to determine if motor is operational
-    // Bits 0-3 should be 0111 for enabled and ready state
-    motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
-}
+//     // Check status word to determine if motor is operational
+//     // Bits 0-3 should be 0111 for enabled and ready state
+//     motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
+// }
 
 //##################################################################################################
 // Function: Set the CPU affinity for a thread
@@ -641,6 +644,14 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr) {
  * the specified cycle time.
  */
 OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
+
+    // note: index starts from 1 not 0
+    rxpdo_t rxpdo[ec_slavecount + 1];  // array storing data sent to slaves
+    txpdo_t txpdo[ec_slavecount + 1];  // array storing data receivedfrom slaves
+
+    rxpdo[0] = {0, 0, 0, 0};    // first element not used
+    txpdo[0] = {0, 0, 0, 0};    // first element not used
+
     int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
     int ht;
@@ -662,15 +673,17 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     toff = 0;
     dorun = 0;
     
-    // 初始化PDO数据
-    rxpdo.controlword = 0x0080;
-    rxpdo.target_velocity = 0;
-    rxpdo.mode_of_operation = 9;  // CSV mode (9)
-    rxpdo.padding = 0;
-    
-    // 发送初始数据
+    // RXPDO on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        memcpy(ec_slave[slave].outputs, &rxpdo, sizeof(rxpdo_t));
+        rxpdo[slave].controlword = 0x0080;    // (fault reset)
+        rxpdo[slave].target_velocity = 0;
+        rxpdo[slave].mode_of_operation = 9;   // CSV mode (9)
+        rxpdo[slave].padding = 0;
+    }
+    
+    // send RXPDO data to slaves
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
     }
     ec_send_processdata();
     wkc = ec_receive_processdata(EC_TIMEOUTRET);  // 确保第一次通信成功
@@ -708,38 +721,54 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                 retry_count = 0;  // Reset retry counter
                 
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(&txpdo, ec_slave[slave].inputs, sizeof(txpdo_t));
+                    memcpy(&(txpdo[slave]), ec_slave[slave].inputs, sizeof(txpdo_t));
                 }
 
                 // State machine control
                 if (step <= 1500) {
-                    rxpdo.controlword = 0x0080;
-                    rxpdo.target_velocity = 0;
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = 0x0080;    // (fault reset)
+                        rxpdo[slave].target_velocity = 0;
+                    }
                 } else if (step <= 1800) {
-                    rxpdo.controlword = 0x0006;
-                    rxpdo.target_velocity = 0;
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = 0x0006;    // (shutdown)
+                        rxpdo[slave].target_velocity = 0;
+                    }
                 } else if (step <= 2000) {
-                    rxpdo.controlword = 0x0007;
-                    rxpdo.target_velocity = 0;
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = 0x0007;    // (switch on)
+                        rxpdo[slave].target_velocity = 0;
+                    }
                 } else if (step <= 2400) {
-                    rxpdo.controlword = 0x000F;
-                    rxpdo.target_velocity = 0;
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = 0x000F;    // (enable operation)
+                        rxpdo[slave].target_velocity = 0;
+                    }
                 } else {
-                    rxpdo.controlword = 0x000F;
-                    rxpdo.target_velocity = 10000;  // Set target velocity to 1000 counts/s
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = 0x000F;      // (enable operation)
+                        rxpdo[slave].target_velocity = 10000;   // counts per second
+                    }
                 }
-                rxpdo.mode_of_operation = 9;  // CSV mode
+
+                // mode of operation
+                for (int slave = 1; slave <= ec_slavecount; slave++) {
+                    rxpdo[slave].mode_of_operation = 9; // (CSV mode = 9)
+                }
 
                 // Send data to slaves
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(ec_slave[slave].outputs, &rxpdo, sizeof(rxpdo_t));
+                    memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
                 }
 
                 if (dorun % 100 == 0) {
-                    printf("Status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n",
-                           txpdo.statusword,
-                           txpdo.actual_position, txpdo.actual_velocity,
-                           rxpdo.target_velocity, rxpdo.mode_of_operation);
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
+                           txpdo[slave].statusword,
+                           txpdo[slave].actual_position, txpdo[slave].actual_velocity,
+                           rxpdo[slave].target_velocity, rxpdo[slave].mode_of_operation);
+                    }
                 }
 
                 if (step < 8000) {
