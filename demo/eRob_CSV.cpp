@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "ethercat.h"
+#include "cia402.h"
 #include <iostream>
 #include <inttypes.h>
 #include <time.h>
@@ -464,7 +465,7 @@ int erob_test() {
     if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
         printf("Operational state reached for all slaves.\n");
         
-        uint8 operation_mode = 9;  // CSV mode
+        uint8 operation_mode = MODE_CSV;  // CSV mode
         uint16_t Control_Word = 0;
         int32_t Max_Velocity = 5000;  // 最大速度限制
         int32_t Max_Acceleration = 5000;  // 最大加速度限制
