@@ -650,8 +650,8 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     rxpdo_t rxpdo[ec_slavecount + 1];  // array storing data sent to slaves
     txpdo_t txpdo[ec_slavecount + 1];  // array storing data receivedfrom slaves
 
-    rxpdo[0] = {0, 0, 0, 0};    // 0th element not used
-    txpdo[0] = {0, 0, 0, 0};    // 0th element not used
+    rxpdo[0] = {};    // 0th element not used
+    txpdo[0] = {};    // 0th element not used
 
     int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
@@ -731,14 +731,11 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                 }
 
                 // CiA 402 State machine control
-                /**
-                 * To do: set control word based on status word
-                 */
-                bool next_state_ready = true;
+                bool next_state_ready = true;   // indicates all slaves in the same state
 
                 if (step <= 1500) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
+                        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;  // TO DO: fault reset is rising edge triggered
                         rxpdo[slave].target_velocity = 0;
                         // check all slaves in switch on disabled state
                         uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);

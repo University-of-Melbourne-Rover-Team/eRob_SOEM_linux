@@ -36,21 +36,21 @@
 #define CW_BITS_HALT                (1U << 8)
 
 // Status word bits
-#define SW_BITS_READY_TO_SWITCH_ON  (1U << 0)
-#define SW_BITS_SWITCHED_ON         (1U << 1)
-#define SW_BITS_OPERATION_ENABLED   (1U << 2)
-#define SW_BITS_FAULT               (1U << 3)
-#define SW_BITS_VOLTAGE_ENABLED     (1U << 4)
-#define SW_BITS_QUICK_STOP          (1U << 5)
-#define SW_BITS_SWITCH_ON_DISABLED  (1U << 6)
-#define SW_BITS_WARNING             (1U << 7)
-#define SW_BITS_TARGET_REACHED      (1U << 10)
-#define SW_BITS_INTERNAL_LIMIT_ACTIVE (1U << 11)
-#define SW_BITS_SETPOINT_ACK        (1U << 12) // PP mode only
+#define SW_BITS_READY_TO_SWITCH_ON      (1U << 0)
+#define SW_BITS_SWITCHED_ON             (1U << 1)
+#define SW_BITS_OPERATION_ENABLED       (1U << 2)
+#define SW_BITS_FAULT                   (1U << 3)
+#define SW_BITS_VOLTAGE_ENABLED         (1U << 4)
+#define SW_BITS_QUICK_STOP              (1U << 5)
+#define SW_BITS_SWITCH_ON_DISABLED      (1U << 6)
+#define SW_BITS_WARNING                 (1U << 7)
+#define SW_BITS_TARGET_REACHED          (1U << 10)
+#define SW_BITS_INTERNAL_LIMIT_ACTIVE   (1U << 11)
+#define SW_BITS_SETPOINT_ACK            (1U << 12)
 
 // CiA 402 state machine sequence (fault reset --> operation enable)
 #define CW_FAULT_RESET_CMD          (CW_BITS_FAULT_RESET)   // 0x0080
-#define CW_ENABLE_VOLTAGE_CMD       (CW_BITS_ENABLE_VOLTAGE)    // 0x0002
+#define CW_QUICK_STOP_CMD           (CW_BITS_ENABLE_VOLTAGE)    // 0x0002
 #define CW_SHUTDOWN_CMD             (CW_BITS_ENABLE_VOLTAGE | CW_BITS_QUICK_STOP) // 0x0006
 #define CW_SWITCH_ON_CMD            (CW_SHUTDOWN_CMD | CW_BITS_SWITCH_ON) // 0x0007
 #define CW_ENABLE_OP_CMD            (CW_SWITCH_ON_CMD | CW_BITS_ENABLE_OPERATION) // 0x000F

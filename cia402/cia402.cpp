@@ -27,10 +27,10 @@ uint16_t cia402_control_word(uint16_t status_word) {
             control_word = CW_ENABLE_OP_CMD;
             break;
         case SW_STATE_QUICK_STOP_ACTIVE:
-            control_word = CW_ENABLE_VOLTAGE_CMD;   // enable voltage to allow motor to perform quick stop
+            control_word = CW_QUICK_STOP_CMD;   // enable voltage to allow motor to perform quick stop
             break;
         case SW_STATE_FAULT_REACTION_ACTIVE:
-            control_word = CW_ENABLE_VOLTAGE_CMD;   // enable voltage to allow motor to perform fault reaction
+            control_word = CW_QUICK_STOP_CMD;   // enable voltage to allow motor to perform fault reaction
             break;
         case SW_STATE_FAULT:
             control_word = CW_FAULT_RESET_CMD;
