@@ -49,7 +49,8 @@
 #define SW_BITS_SETPOINT_ACK        (1U << 12) // PP mode only
 
 // CiA 402 state machine sequence (fault reset --> operation enable)
-#define CW_FAULT_RESET_CMD          (0x0080) // fault reset command
+#define CW_FAULT_RESET_CMD          (CW_BITS_FAULT_RESET)   // 0x0080
+#define CW_ENABLE_VOLTAGE_CMD       (CW_BITS_ENABLE_VOLTAGE)    // 0x0002
 #define CW_SHUTDOWN_CMD             (CW_BITS_ENABLE_VOLTAGE | CW_BITS_QUICK_STOP) // 0x0006
 #define CW_SWITCH_ON_CMD            (CW_SHUTDOWN_CMD | CW_BITS_SWITCH_ON) // 0x0007
 #define CW_ENABLE_OP_CMD            (CW_SWITCH_ON_CMD | CW_BITS_ENABLE_OPERATION) // 0x000F
@@ -58,34 +59,28 @@
 #define SW_STATE_MASK               0x006FU
 
 // CiA 402 status word states
-#define SW_STATE_NOT_READY_TO_SWITCH_ON    0x00U
-#define SW_STATE_SWITCH_ON_DISABLED        0x40U
-#define SW_STATE_READY_TO_SWITCH_ON        0x21U
-#define SW_STATE_SWITCHED_ON               0x23U
-#define SW_STATE_OPERATION_ENABLED         0x27U
-#define SW_STATE_QUICK_STOP_ACTIVE         0x07U
-#define SW_STATE_FAULT_REACTION_ACTIVE     0x0FU
-#define SW_STATE_FAULT                     0x08U
+#define SW_STATE_NOT_READY_TO_SWITCH_ON    0x0000U
+#define SW_STATE_SWITCH_ON_DISABLED        0x0040U
+#define SW_STATE_READY_TO_SWITCH_ON        0x0021U
+#define SW_STATE_SWITCHED_ON               0x0023U
+#define SW_STATE_OPERATION_ENABLED         0x0027U
+#define SW_STATE_QUICK_STOP_ACTIVE         0x0007U
+#define SW_STATE_FAULT_REACTION_ACTIVE     0x000FU
+#define SW_STATE_FAULT                     0x0008U
 
-// Decoded CiA 402 drive state representation
-typedef enum {
-    DRIVE_STATE_NOT_READY_TO_SWITCH_ON,
-    DRIVE_STATE_SWITCH_ON_DISABLED,
-    DRIVE_STATE_READY_TO_SWITCH_ON,
-    DRIVE_STATE_SWITCHED_ON,
-    DRIVE_STATE_OPERATION_ENABLED,
-    DRIVE_STATE_QUICK_STOP_ACTIVE,
-    DRIVE_STATE_FAULT_REACTION_ACTIVE,
-    DRIVE_STATE_FAULT,
-    DRIVE_STATE_UNKNOWN
-} DriveStateType;
+/**
+ * Decodes status word received from slave
+ * @param {uint16_t} status_word: raw status word
+ * @return {uint16_t}: decoded status word
+ */
+uint16_t cia402_decode_state(uint16_t status_word);
 
-typedef struct {
-    DriveStateType type;
-    uint16_t unknown_value; // Populated only if type == DRIVE_STATE_UNKNOWN
-} DriveState;
 
-// Decode a status word into an exact CiA 402 state.
-DriveState cia402_decode_state(uint16_t status);
+/**
+ * Returns control word according to status word
+ * @param {uint16_t} status_word: status word received from slave
+ * @return {uint16_t} control word to transition to next state
+ */
+uint16_t cia402_control_word(uint16_t status_word);
 
 #endif

@@ -650,8 +650,8 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     rxpdo_t rxpdo[ec_slavecount + 1];  // array storing data sent to slaves
     txpdo_t txpdo[ec_slavecount + 1];  // array storing data receivedfrom slaves
 
-    rxpdo[0] = {0, 0, 0, 0};    // first element not used
-    txpdo[0] = {0, 0, 0, 0};    // first element not used
+    rxpdo[0] = {0, 0, 0, 0};    // 0th element not used
+    txpdo[0] = {0, 0, 0, 0};    // 0th element not used
 
     int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
@@ -674,11 +674,11 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     toff = 0;
     dorun = 0;
     
-    // RXPDO on startup
+    // configure RXPDO data on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        rxpdo[slave].controlword = 0x0080;    // (fault reset)
-        rxpdo[slave].target_velocity = 0;
-        rxpdo[slave].mode_of_operation = 9;   // CSV mode (9)
+        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
+        rxpdo[slave].target_velocity = 0; 
+        rxpdo[slave].mode_of_operation = MODE_CSV;
         rxpdo[slave].padding = 0;
     }
     
@@ -718,51 +718,87 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             // Receive process data
             wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
+            /**
+             * Working counter matched expected
+             * Detected the expected number of slaves
+             */
             if (wkc >= expectedWKC) {
                 retry_count = 0;  // Reset retry counter
                 
+                // store TXPDO data received from slave into local array
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
                     memcpy(&(txpdo[slave]), ec_slave[slave].inputs, sizeof(txpdo_t));
                 }
 
-                // State machine control
+                // CiA 402 State machine control
+                /**
+                 * To do: set control word based on status word
+                 */
+                bool next_state_ready = true;
+
                 if (step <= 1500) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = 0x0080;    // (fault reset)
+                        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
                         rxpdo[slave].target_velocity = 0;
+                        // check all slaves in switch on disabled state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_SWITCH_ON_DISABLED) {
+                            next_state_ready = false;
+                        }
                     }
-                } else if (step <= 1800) {
+                }
+                else if (step <= 1800) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = 0x0006;    // (shutdown)
+                        rxpdo[slave].controlword = CW_SHUTDOWN_CMD;
                         rxpdo[slave].target_velocity = 0;
+                        // check all slaves in ready to switch on state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_READY_TO_SWITCH_ON) {
+                            next_state_ready = false;
+                        }
                     }
-                } else if (step <= 2000) {
+                } 
+                else if (step <= 2000) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = 0x0007;    // (switch on)
+                        rxpdo[slave].controlword = CW_SWITCH_ON_CMD;
                         rxpdo[slave].target_velocity = 0;
+                        // check all slaves in switched on state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_SWITCHED_ON) {
+                            next_state_ready = false;
+                        }
                     }
-                } else if (step <= 2400) {
+                } 
+                else if (step <= 2400) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = 0x000F;    // (enable operation)
+                        rxpdo[slave].controlword = CW_ENABLE_OP_CMD;
                         rxpdo[slave].target_velocity = 0;
+                        // check all slaves in operation enabled state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_OPERATION_ENABLED) {
+                            next_state_ready = false;
+                        }
                     }
-                } else {
+                } 
+                else {
+                    // all slaves enabled, set target velocities
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = 0x000F;      // (enable operation)
+                        rxpdo[slave].controlword = CW_ENABLE_OP_CMD;
                         rxpdo[slave].target_velocity = 10000;   // counts per second
                     }
                 }
 
-                // mode of operation
+                // configure mode of operation (CSV == 9)
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    rxpdo[slave].mode_of_operation = 9; // (CSV mode = 9)
+                    rxpdo[slave].mode_of_operation = MODE_CSV;
                 }
 
-                // Send data to slaves
+                // Copy RXPDO data from local array to SOEM for sending
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
                     memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
                 }
 
+                // print TXPDO data every 100 ticks
                 if (dorun % 100 == 0) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
                         printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
@@ -772,10 +808,19 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     }
                 }
 
-                if (step < 8000) {
+                // only progress state machine if next state ready
+                // (next_state_ready == true) means all slaves are in same state
+                if (step < 8000 && next_state_ready) {
                     step++;
                 }
-            } else {
+            } 
+            
+            /**
+             * Working counter did not match expected
+             * Less slaves than expected
+             * To-do: continue normal operation with warning that WKC did not match expected
+             */
+            else {
                 retry_count++;
                 if (retry_count >= MAX_RETRY) {
                     printf("ERROR: Communication failure after %d retries\n", retry_count);
