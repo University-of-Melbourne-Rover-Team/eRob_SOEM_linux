@@ -14,6 +14,10 @@ add_executable(eRob_CSV eRob_CSV.cpp)
 target_link_libraries(eRob_CSV cia402 soem)
 install(TARGETS eRob_CSV DESTINATION bin)
 
+add_executable(eRob_PV eRob_PV.cpp)
+target_link_libraries(eRob_PV cia402 soem)
+install(TARGETS eRob_PV DESTINATION bin)
+
 add_executable(eRob_CSP_subscriber eRob_CSP_subscriber.cpp)
 target_link_libraries(eRob_CSP_subscriber cia402 soem)
 install(TARGETS eRob_CSP_subscriber DESTINATION bin)

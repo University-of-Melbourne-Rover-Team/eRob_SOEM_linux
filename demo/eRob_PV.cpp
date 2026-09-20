@@ -60,8 +60,14 @@ void add_timespec(struct timespec *ts, int64 addtime);
 #define stack64k (64 * 1024) // Stack size for threads
 #define NSEC_PER_SEC 1000000000   // Number of nanoseconds in one second
 #define EC_TIMEOUTMON 5000        // Timeout for monitoring in microseconds
-#define MAX_VELOCITY 30000        // Maximum velocity
+
+// motor parameters
+#define MAX_VELOCITY 50000        // Maximum velocity
 #define MAX_ACCELERATION 50000    // Maximum acceleration
+#define QUICK_STOP_DECEL 40000    // quick stop deceleration
+#define PROFILE_ACCEL 30000
+#define PROFILE_DECEL 30000
+#define TARGET_VELOCITY 40000
 
 // Conversion units for the servomotor
 float Cnt_to_deg = 0.000686645; // Conversion factor from counts to degrees
@@ -72,7 +78,7 @@ typedef struct {
     uint16_t controlword;      // 0x6040:0, 16 bits
     int32_t target_velocity;   // 0x60FF:0, 32 bits
     uint8_t mode_of_operation; // 0x6060:0, 8 bits
-    uint8_t padding;          // 8 bits padding for alignment
+    uint8_t padding;           // 8 bits padding for alignment
 } __attribute__((__packed__)) rxpdo_t;
 
 // Structure for TXPDO (Status data received from slave)
@@ -465,12 +471,13 @@ int erob_test() {
     if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
         printf("Operational state reached for all slaves.\n");
         
-        uint8 operation_mode = MODE_CSV;  // CSV mode
+        uint8 operation_mode = MODE_PROFILE_VELOCITY;
         uint16_t Control_Word = 0;
-        int32_t Max_Velocity = 30000;  // 最大速度限制
-        int32_t Max_Acceleration = 30000;  // 最大加速度限制
-        int32_t Quick_Stop_Decel = 30000;  // 快速停止减速度
-        int32_t Profile_Decel = 10000;  // 减速度
+        int32_t Max_Velocity = MAX_VELOCITY;
+        int32_t Max_Acceleration = MAX_ACCELERATION;
+        int32_t Quick_Stop_Decel = QUICK_STOP_DECEL;
+        int32_t Profile_Accel = PROFILE_ACCEL;
+        int32_t Profile_Decel = PROFILE_DECEL;
         
         for (int i = 1; i <= ec_slavecount; i++) {
             // 先禁用电机
@@ -486,6 +493,7 @@ int erob_test() {
             ec_SDOwrite(i, 0x6080, 0x00, FALSE, sizeof(Max_Velocity), &Max_Velocity, EC_TIMEOUTSAFE);
             ec_SDOwrite(i, 0x60C5, 0x00, FALSE, sizeof(Max_Acceleration), &Max_Acceleration, EC_TIMEOUTSAFE);
             ec_SDOwrite(i, 0x6085, 0x00, FALSE, sizeof(Quick_Stop_Decel), &Quick_Stop_Decel, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, 0x6083, 0x00, FALSE, sizeof(Profile_Accel), &Profile_Accel, EC_TIMEOUTSAFE);
             ec_SDOwrite(i, 0x6084, 0x00, FALSE, sizeof(Profile_Decel), &Profile_Decel, EC_TIMEOUTSAFE);
             
             osal_usleep(100000);
@@ -653,6 +661,8 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     rxpdo[0] = {};    // 0th element not used
     txpdo[0] = {};    // 0th element not used
 
+    const int mode_of_operation = MODE_PROFILE_VELOCITY;
+
     int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
     int ht;
@@ -678,7 +688,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     for (int slave = 1; slave <= ec_slavecount; slave++) {
         rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
         rxpdo[slave].target_velocity = 0; 
-        rxpdo[slave].mode_of_operation = MODE_CSV;
+        rxpdo[slave].mode_of_operation = mode_of_operation;
         rxpdo[slave].padding = 0;
     }
     
@@ -781,13 +791,13 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     // all slaves enabled, set target velocities
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
                         rxpdo[slave].controlword = CW_ENABLE_OP_CMD;
-                        rxpdo[slave].target_velocity = -20000;   // counts per second
+                        rxpdo[slave].target_velocity = TARGET_VELOCITY;   // counts per second
                     }
                 }
 
                 // configure mode of operation (CSV == 9)
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    rxpdo[slave].mode_of_operation = MODE_CSV;
+                    rxpdo[slave].mode_of_operation = mode_of_operation;
                 }
 
                 // Copy RXPDO data from local array to SOEM for sending
