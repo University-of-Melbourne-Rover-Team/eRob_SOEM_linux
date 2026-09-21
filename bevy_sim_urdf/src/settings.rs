@@ -18,7 +18,7 @@ pub(crate) struct ViewerSettings {
     pub(crate) target_rpy: Vec3,
     pub(crate) target_orientation_enabled: bool,
     pub(crate) dry_run: bool,
-    pub(crate) hardware_config: Option<PathBuf>,
+    pub(crate) hardware: bool,
     pub(crate) initial_command_requested: bool,
 }
 
@@ -31,7 +31,7 @@ pub(crate) fn parse_viewer_settings(repo_root: &Path) -> ViewerSettings {
     let mut target_xyz_arg = None;
     let mut target_rpy_arg = None;
     let mut dry_run = false;
-    let mut hardware_config = None;
+    let mut hardware = false;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -48,13 +48,9 @@ pub(crate) fn parse_viewer_settings(repo_root: &Path) -> ViewerSettings {
             continue;
         }
 
-        if let Some(value) = arg.strip_prefix("--hardware-config=") {
-            hardware_config = Some(PathBuf::from(value));
-            continue;
-        }
         match arg.as_str() {
-            "--hardware-config" => {
-                hardware_config = Some(PathBuf::from(args.next().expect("--hardware-config needs a path")));
+            "--hardware" => {
+                hardware = true;
             }
             "--dry-run" => {
                 dry_run = true;
@@ -133,7 +129,7 @@ pub(crate) fn parse_viewer_settings(repo_root: &Path) -> ViewerSettings {
         target_rpy,
         target_orientation_enabled,
         dry_run,
-        hardware_config: hardware_config.map(|path| resolve_repo_path(repo_root, path)),
+        hardware,
         initial_command_requested: joints_arg.is_some() || target_xyz_arg.is_some(),
     }
 }

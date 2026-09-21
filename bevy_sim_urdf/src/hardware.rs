@@ -8,11 +8,15 @@ use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::kinematics::{EncoderCalibration, KinematicsState};
+use crate::kinematics::{KinematicsState, counts_to_radians, radians_to_counts};
 use crate::model::RobotModel;
 use crate::scene::JointState;
 
 const MOTOR_COUNT: usize = 6;
+// Array order is EtherCAT slave 1 through 6.
+const JOINT_NAMES: [&str; MOTOR_COUNT] = [
+    "revolute_1", "revolute_2", "revolute_3", "revolute_4", "revolute_5", "revolute_6",
+];
 const SERVER_PATH: &str = "/tmp/csp.sock";
 const FEEDBACK_SIZE: usize = 48;
 const FEEDBACK_TIMEOUT: Duration = Duration::from_millis(250);
@@ -21,7 +25,6 @@ const FEEDBACK_TIMEOUT: Duration = Duration::from_millis(250);
 pub(crate) struct HardwareBridge {
     socket: UnixDatagram,
     client_path: PathBuf,
-    calibration: [EncoderCalibration; MOTOR_COUNT],
     last_feedback: Option<Instant>,
     last_subscribe: Option<Instant>,
     last_sent: Option<[i32; MOTOR_COUNT]>,
@@ -34,34 +37,13 @@ pub(crate) struct HardwareBridge {
 }
 
 impl HardwareBridge {
-    pub(crate) fn open(path: &Path, model: &RobotModel, startup_command: bool) -> Result<Self, String> {
-        let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut calibration = Vec::new();
-        for (line_number, line) in text.lines().enumerate() {
-            let fields = line.split('#').next().unwrap_or("").split_whitespace().collect::<Vec<_>>();
-            if fields.is_empty() { continue; }
-            let invalid = || format!("{}:{}: expected joint counts_per_turn zero_count direction",
-                                      path.display(), line_number + 1);
-            if fields.len() != 4 { return Err(invalid()); }
-            let entry = EncoderCalibration {
-                joint_name: fields[0].to_string(),
-                counts_per_turn: fields[1].parse::<f64>().map_err(|_| invalid())?,
-                zero_count: fields[2].parse::<i32>().map_err(|_| invalid())?,
-                direction: fields[3].parse::<f64>().map_err(|_| invalid())?,
-            };
-            if !entry.counts_per_turn.is_finite() || entry.counts_per_turn <= 0.0
-                || (entry.direction != -1.0 && entry.direction != 1.0)
-            { return Err(invalid()); }
-            if !model.joints.iter().any(|j| j.is_moving() && j.name == entry.joint_name)
-                || calibration.iter().any(|j: &EncoderCalibration| j.joint_name == entry.joint_name)
-            { return Err(format!("Unknown or duplicate joint: {}", entry.joint_name)); }
-            calibration.push(entry);
+    pub(crate) fn open(model: &RobotModel, startup_command: bool) -> Result<Self, String> {
+        if model.joints.iter().filter(|joint| joint.is_moving()).count() != MOTOR_COUNT
+            || JOINT_NAMES.iter().any(|name|
+                !model.joints.iter().any(|joint| joint.is_moving() && joint.name == *name))
+        {
+            return Err("Hardware mode requires revolute_1 through revolute_6".to_string());
         }
-        if model.joints.iter().filter(|j| j.is_moving()).count() != MOTOR_COUNT {
-            return Err("Hardware mode requires six movable URDF joints".to_string());
-        }
-        let calibration: [EncoderCalibration; MOTOR_COUNT] = calibration.try_into()
-            .map_err(|_| "Hardware calibration requires exactly six rows".to_string())?;
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
         let client_path = PathBuf::from(format!("/tmp/csp-bevy-{}-{nonce}.sock", std::process::id()));
         let socket = UnixDatagram::bind(&client_path).map_err(|e| e.to_string())?;
@@ -70,7 +52,7 @@ impl HardwareBridge {
             return Err(error.to_string());
         }
         Ok(Self {
-            socket, client_path, calibration, last_feedback: None,
+            socket, client_path, last_feedback: None,
             last_subscribe: None, last_sent: None, needs_seed: true, reset_task_target: false,
             startup_command, ready: false, statuswords: [0; MOTOR_COUNT], last_error: None,
         })
@@ -135,8 +117,7 @@ impl HardwareBridge {
                     self.ready = ready;
                     self.last_feedback = Some(Instant::now());
                     self.last_error = None;
-                    latest = Some(std::array::from_fn(|i|
-                        self.calibration[i].counts_to_radians(counts[i] as f64)));
+                    latest = Some(counts.map(counts_to_radians));
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
                 Err(error) if error.kind() == ErrorKind::Interrupted => continue,
@@ -162,7 +143,7 @@ pub(crate) fn receive_hardware_feedback(
     let Some(mut bridge) = bridge else { return; };
     let Some(angles) = bridge.poll() else { return; };
     for (mut joint, mut transform) in &mut joints {
-        if let Some(index) = bridge.calibration.iter().position(|c| c.joint_name == joint.name) {
+        if let Some(index) = JOINT_NAMES.iter().position(|name| *name == joint.name) {
             joint.value = angles[index]; // Never clamp measured positions to a desired joint limit.
             if bridge.needs_seed && !bridge.startup_command {
                 joint.target_value = joint.value;
@@ -172,8 +153,8 @@ pub(crate) fn receive_hardware_feedback(
     }
     if bridge.needs_seed && !bridge.startup_command {
         // Seed the command comparison from feedback without transmitting a move.
-        let seed = bridge.calibration.iter().zip(angles).map(|(calibration, angle)|
-            calibration.radians_to_counts(angle as f64)).collect::<Result<Vec<_>, _>>();
+        let seed = angles.iter().map(|&angle|
+            radians_to_counts(angle as f64)).collect::<Result<Vec<_>, _>>();
         match seed {
             Ok(counts) => bridge.last_sent = counts.try_into().ok(),
             Err(error) => {
@@ -188,7 +169,7 @@ pub(crate) fn receive_hardware_feedback(
     // first ready sample. Early SAFE_OP values must not become later targets.
     bridge.needs_seed = !bridge.ready;
     let positions = kinematics.joint_names.iter().map(|name| {
-        bridge.calibration.iter().position(|c| &c.joint_name == name)
+        JOINT_NAMES.iter().position(|joint_name| *joint_name == name.as_str())
             .map(|index| angles[index] as f64).unwrap_or(0.0)
     }).collect::<Vec<_>>();
     if let Err(error) = kinematics.chain.set_joint_positions(&positions) {
@@ -204,13 +185,13 @@ pub(crate) fn send_hardware_commands(
 ) {
     let Some(mut bridge) = bridge else { return; };
     if !bridge.can_command() { return; }
-    let encoded = bridge.calibration.iter().map(|calibration| {
-        let joint = joints.iter().find(|joint| joint.name == calibration.joint_name)
-            .ok_or_else(|| format!("Missing hardware joint: {}", calibration.joint_name))?;
-        calibration.radians_to_counts(joint.target_value as f64)
+    let encoded = JOINT_NAMES.iter().map(|name| {
+        let joint = joints.iter().find(|joint| joint.name == *name)
+            .ok_or_else(|| format!("Missing hardware joint: {name}"))?;
+        radians_to_counts(joint.target_value as f64)
     }).collect::<Result<Vec<_>, String>>();
     let counts: [i32; MOTOR_COUNT] = match encoded {
-        Ok(counts) => counts.try_into().expect("six calibrated joints"),
+        Ok(counts) => counts.try_into().expect("six hardware joints"),
         Err(error) => { bridge.last_error = Some(error); return; }
     };
     if bridge.last_sent == Some(counts) { return; }

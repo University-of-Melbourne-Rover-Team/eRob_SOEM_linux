@@ -703,6 +703,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     rxpdo_t rxpdo[EC_MAXSLAVE]{};
     txpdo_t txpdo[EC_MAXSLAVE]{};
     MotionPlanner motion_planners[EC_MAXSLAVE];
+    bool hold_position_latched[EC_MAXSLAVE]{};
     CommandInput command_input;
     CspFeedback feedback{};
     memcpy(feedback.magic, "CSF1", sizeof(feedback.magic));
@@ -798,6 +799,23 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     feedback.statuswords[slave - 1] = txpdo[slave].statusword;
                     rxpdo[slave].controlword = controlword;
                     rxpdo[slave].mode_of_operation = MODE_CSP;
+
+                    const uint16_t drive_state = cia402_decode_state(txpdo[slave].statusword);
+                    const bool enabling_or_enabled = controlword == CW_ENABLE_OP_CMD &&
+                        (drive_state == SW_STATE_SWITCHED_ON ||
+                         drive_state == SW_STATE_OPERATION_ENABLED);
+                    if (!enabling_or_enabled) {
+                        // Align with feedback while disabled/faulted. Re-latch
+                        // before enabling so an old target is not applied on recovery.
+                        rxpdo[slave].target_position = txpdo[slave].actual_position;
+                        hold_position_latched[slave] = false;
+                    } else if (!hold_position_latched[slave]) {
+                        // Capture once, before sending Enable Operation. Copying
+                        // actual_position every cycle would let the target drift.
+                        rxpdo[slave].target_position = txpdo[slave].actual_position;
+                        hold_position_latched[slave] = true;
+                    }
+
                     if (motion_ready && command_available) {
                         motion_planners[slave].target_position =
                             command_input.latest.positions[slave - 1];
@@ -805,9 +823,8 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                             &motion_planners[slave], txpdo[slave].actual_position,
                             static_cast<double>(cycletime) / NSEC_PER_SEC);
                     } else {
-                        // Hold each slave at its own position until all are
-                        // ready. Re-seed its planner when motion resumes.
-                        rxpdo[slave].target_position = txpdo[slave].actual_position;
+                        // Keep the latched position (or last commanded setpoint)
+                        // while enabled, including when another slave is not ready.
                         motion_planners[slave].initialized = false;
                     }
                     memcpy(ec_slave[slave].outputs, &rxpdo[slave], sizeof(rxpdo_t));

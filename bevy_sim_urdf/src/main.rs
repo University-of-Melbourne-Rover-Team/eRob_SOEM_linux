@@ -81,8 +81,8 @@ fn main() {
     }
 
     let mut app = App::new();
-    if let Some(path) = &settings.hardware_config {
-        let hardware = HardwareBridge::open(path, &model, settings.initial_command_requested)
+    if settings.hardware {
+        let hardware = HardwareBridge::open(&model, settings.initial_command_requested)
             .unwrap_or_else(|error| panic!("Hardware setup: {error}"));
         println!("Hardware mode: /tmp/csp.sock; display follows measured positions");
         app.insert_resource(hardware);

@@ -282,28 +282,17 @@ fn rpy_quat_f64(rpy: Vec3) -> UnitQuaternion<f64> {
     UnitQuaternion::from_euler_angles(rpy.x as f64, rpy.y as f64, rpy.z as f64)
 }
 
-/// Calibration is ordered by EtherCAT slave ID, never by HashMap iteration.
-#[derive(Clone)]
-pub(crate) struct EncoderCalibration {
-    pub(crate) joint_name: String,
-    pub(crate) counts_per_turn: f64,
-    pub(crate) zero_count: i32,
-    pub(crate) direction: f64,
+// All six joints use a 19-bit output encoder, zero offset, and matching direction.
+const COUNTS_PER_TURN: f64 = 524288.0;
+
+pub(crate) fn radians_to_counts(radians: f64) -> Result<i32, String> {
+    let counts = (radians * COUNTS_PER_TURN / std::f64::consts::TAU).round();
+    if !counts.is_finite() || counts < i32::MIN as f64 || counts > i32::MAX as f64 {
+        return Err("Target is outside signed 32-bit encoder range".to_string());
+    }
+    Ok(counts as i32)
 }
 
-impl EncoderCalibration {
-    pub(crate) fn radians_to_counts(&self, radians: f64) -> Result<i32, String> {
-        let counts = (self.zero_count as f64
-            + self.direction * radians * self.counts_per_turn / std::f64::consts::TAU).round();
-        if !counts.is_finite() || counts < i32::MIN as f64 || counts > i32::MAX as f64 {
-            return Err(format!("{}: target is outside signed 32-bit encoder range", self.joint_name));
-        }
-        // Preserve requested turns. Do not wrap the CSP destination to one turn.
-        Ok(counts as i32)
-    }
-
-    pub(crate) fn counts_to_radians(&self, counts: f64) -> f32 {
-        ((counts - self.zero_count as f64) * std::f64::consts::TAU
-            / (self.direction * self.counts_per_turn)) as f32
-    }
+pub(crate) fn counts_to_radians(counts: i32) -> f32 {
+    (counts as f64 * std::f64::consts::TAU / COUNTS_PER_TURN) as f32
 }

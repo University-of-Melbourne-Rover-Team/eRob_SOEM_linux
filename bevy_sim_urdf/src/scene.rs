@@ -121,7 +121,7 @@ pub(crate) fn setup(
         let entity = commands
             .spawn((Transform::default(), Visibility::Inherited, Name::new(link.name.clone())))
             .id();
-        if settings.hardware_config.is_some()
+        if settings.hardware
             && !model.0.joints.iter().any(|joint| joint.child == link.name)
         {
             // Until the first feedback sample there is no measured pose to show.
