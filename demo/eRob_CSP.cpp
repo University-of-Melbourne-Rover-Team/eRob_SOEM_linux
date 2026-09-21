@@ -12,11 +12,13 @@
 #include <string.h>
 #include "ethercat.h"
 #include "cia402.h"
+#include "csp_command.h"
 #include <iostream>
 #include <inttypes.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include <sys/time.h>
 #include <pthread.h>
@@ -32,18 +34,33 @@
 
 #include <sys/socket.h>
 #include <unistd.h>
-#include <atomic>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <cerrno>
+#include <cstdlib>
 
 
-static std::atomic<int32_t> commanded_position{0};
-static std::atomic<bool> have_command{false};
+// Created before the cyclic thread starts; only that thread receives commands.
+static int command_socket_fd = -1;
 
-static constexpr const char* SOCKET_PATH =
-    "../tmp/csp.sock";
+struct CommandInput {
+    CspCommand latest{};
+    bool available = false;
+    unsigned rejected = 0;
+    int receive_error = 0;
+    sockaddr_un feedback_peer{};
+    socklen_t feedback_peer_length = 0;
+    unsigned feedback_drops = 0;
+    int feedback_error = 0;
+};
+
+static int open_command_socket();
+static void poll_commands(int sock, CommandInput &input);
+static void publish_feedback(int sock, CommandInput &input, const CspFeedback &feedback);
+static void remove_command_socket() {
+    unlink(CSP_SOCKET_PATH);
+}
 
 // Global variables for EtherCAT communication
 char IOmap[4096]; // I/O mapping for EtherCAT
@@ -98,10 +115,6 @@ typedef struct {
     int16_t actual_torque;    // 0x6077:0, 16 bits
 } __attribute__((__packed__)) txpdo_t;
 
-// Add in the global variable declaration section at the beginning of the file
-rxpdo_t rxpdo;  // Global variable, used for sending data to slaves
-txpdo_t txpdo;  // Global variable, used for receiving data from slaves
-
 // The cyclic thread never waits for status readers or terminal output.
 struct CycleStatus {
     uint16_t statusword = 0;
@@ -115,12 +128,12 @@ struct CycleStatus {
     long cycle_ns = 0;
     unsigned overruns = 0;
     unsigned sleep_errors = 0;
+    unsigned rejected_commands = 0;
+    int command_error = 0;
+    int feedback_error = 0;
 };
-static CycleStatus cycle_status;
+static CycleStatus cycle_status[EC_MAXSLAVE];
 static pthread_mutex_t status_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// Function to handle the command socket thread
-void* command_socket_thread(void* arg);
 
 // 在文件开头，其他宏定义之后添加
 #undef MAX_VELOCITY  // Ensure there are no naming conflicts
@@ -142,7 +155,6 @@ constexpr double MotionPlanner::MAX_VELOCITY;
 constexpr double MotionPlanner::MAX_ACCELERATION;
 constexpr double MotionPlanner::BRAKE_DECEL;
 
-MotionPlanner g_motion_planner;
 int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position,
                         double cycle_seconds);
 
@@ -191,6 +203,12 @@ int erob_test() {
         printf("___________________________________________\n");
         ec_close(); // Close the EtherCAT connection
         return -1; // Return error if no slaves are found
+    }
+    if (ec_slavecount != CSP_MOTOR_COUNT) {
+        fprintf(stderr, "CSP commands require exactly %d slaves; found %d.\n",
+                CSP_MOTOR_COUNT, ec_slavecount);
+        ec_close();
+        return -1;
     }
     printf("%d slaves found and configured.\n", ec_slavecount); // Print the number of slaves found
     printf("___________________________________________\n");
@@ -485,15 +503,37 @@ int erob_test() {
             ec_SDOwrite(i, 0x6060, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
 
         }
-  // The main loop only needs to keep the program running
+  // Status and command errors are printed outside the cyclic thread.
+        unsigned reported_rejections = 0;
+        int reported_command_error = 0;
+        int reported_feedback_error = 0;
         while(1) {
             osal_usleep(100000);
+            CycleStatus snapshot[EC_MAXSLAVE];
             pthread_mutex_lock(&status_mutex);
-            const CycleStatus status = cycle_status;
+            memcpy(snapshot, cycle_status, (ec_slavecount + 1) * sizeof(CycleStatus));
             pthread_mutex_unlock(&status_mutex);
-            printf("Status: cycle=%d, SW=0x%04X, pos=%d, target=%d, goal=%d, vel=%d\n",
-                   status.cycle_number, status.statusword, status.actual_position,
-                   status.target_position, status.destination_position, status.actual_velocity);
+            if (snapshot[1].rejected_commands != reported_rejections) {
+                reported_rejections = snapshot[1].rejected_commands;
+                fprintf(stderr, "Ignored malformed CSP commands: %u (expected six int32 positions).\n",
+                        reported_rejections);
+            }
+            if (snapshot[1].feedback_error != reported_feedback_error) {
+                reported_feedback_error = snapshot[1].feedback_error;
+                if (reported_feedback_error != 0)
+                    fprintf(stderr, "CSP feedback send: %s\n", strerror(reported_feedback_error));
+            }
+            if (snapshot[1].command_error != reported_command_error) {
+                reported_command_error = snapshot[1].command_error;
+                fprintf(stderr, "CSP command input disabled: %s. Last destinations retained.\n",
+                        strerror(reported_command_error));
+            }
+            for (int slave = 1; slave <= ec_slavecount; slave++) {
+                const CycleStatus &status = snapshot[slave];
+                printf("Slave %d: cycle=%d, SW=0x%04X, pos=%d, target=%d, goal=%d, vel=%d\n",
+                       slave, status.cycle_number, status.statusword, status.actual_position,
+                       status.target_position, status.destination_position, status.actual_velocity);
+            }
         }
     }
 
@@ -660,17 +700,23 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     dorun = 0;
     
     // Initialize PDO data
-    rxpdo_t rxpdo{};
-    txpdo_t txpdo{};
-    
-    rxpdo.controlword = 0x0080;
-    rxpdo.target_position = 0;
-    rxpdo.mode_of_operation = 8;
-    rxpdo.padding = 0;
+    rxpdo_t rxpdo[EC_MAXSLAVE]{};
+    txpdo_t txpdo[EC_MAXSLAVE]{};
+    MotionPlanner motion_planners[EC_MAXSLAVE];
+    CommandInput command_input;
+    CspFeedback feedback{};
+    memcpy(feedback.magic, "CSF1", sizeof(feedback.magic));
+    // configure RXPDO data on startup
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
+        rxpdo[slave].target_position = 0; 
+        rxpdo[slave].mode_of_operation = MODE_CSP;
+        rxpdo[slave].padding = 0;
+    }
     
     // Send initial process data
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        memcpy(ec_slave[slave].outputs, &rxpdo, sizeof(rxpdo_t));
+        memcpy(ec_slave[slave].outputs, &rxpdo[slave], sizeof(rxpdo_t));
     }
     ec_send_processdata();
 
@@ -707,49 +753,67 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             // Receive process data
             wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
+            // Consume queued commands even if this cycle's PDO feedback is bad.
+            // Only this thread owns the complete destination array.
+            poll_commands(command_socket_fd, command_input);
+
             if (wkc >= expectedWKC) {
-                // Retrieve the current motor status
+                // Keep each slave's feedback separate.
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(&txpdo, ec_slave[slave].inputs, sizeof(txpdo_t));
+                    memcpy(&txpdo[slave], ec_slave[slave].inputs, sizeof(txpdo_t));
                 }
 
-                // State machine control
+                // Preserve CSP's existing stage thresholds. Like CSV, each
+                // stage waits for every slave to report its expected state.
+                uint16_t controlword;
+                uint16_t expected_state;
                 if (step <= 400) {
-                    rxpdo.controlword = 0x0080;
-                    rxpdo.target_position = 0;
+                    controlword = CW_FAULT_RESET_CMD;
+                    expected_state = SW_STATE_SWITCH_ON_DISABLED;
                 } else if (step <= 600) {
-                    rxpdo.controlword = 0x0006;
-                    rxpdo.target_position = txpdo.actual_position;
+                    controlword = CW_SHUTDOWN_CMD;
+                    expected_state = SW_STATE_READY_TO_SWITCH_ON;
                 } else if (step <= 800) {
-                    rxpdo.controlword = 0x0007;
-                    rxpdo.target_position = txpdo.actual_position;
-                } else if (step <= 1000) {
-                    rxpdo.controlword = 0x000F;
-                    rxpdo.target_position = txpdo.actual_position;
+                    controlword = CW_SWITCH_ON_CMD;
+                    expected_state = SW_STATE_SWITCHED_ON;
                 } else {
-                    rxpdo.controlword = 0x000F;
-                    rxpdo.mode_of_operation = 8;
+                    controlword = CW_ENABLE_OP_CMD;
+                    expected_state = SW_STATE_OPERATION_ENABLED;
+                }
 
-                    if (have_command.load(std::memory_order_acquire)) {
-                        // Replace the destination every cycle. Preserve the
-                        // current trajectory position/velocity when retargeting.
-                        g_motion_planner.target_position =
-                            commanded_position.load(std::memory_order_relaxed);
-                        rxpdo.target_position = plan_trajectory(
-                            &g_motion_planner, txpdo.actual_position,
+                bool next_state_ready = true;
+                for (int slave = 1; slave <= ec_slavecount; slave++) {
+                    if (cia402_decode_state(txpdo[slave].statusword) != expected_state)
+                        next_state_ready = false;
+                }
+
+                // Array entry zero is slave 1; all six destinations change together.
+                const bool command_available = command_input.available;
+                const bool motion_ready = step > 1000 && next_state_ready;
+                feedback.cycle = static_cast<uint32_t>(dorun);
+                feedback.flags = motion_ready && ec_slave[0].state == EC_STATE_OPERATIONAL
+                    ? CSP_FEEDBACK_READY : 0;
+                for (int slave = 1; slave <= ec_slavecount; slave++) {
+                    feedback.positions[slave - 1] = txpdo[slave].actual_position;
+                    feedback.statuswords[slave - 1] = txpdo[slave].statusword;
+                    rxpdo[slave].controlword = controlword;
+                    rxpdo[slave].mode_of_operation = MODE_CSP;
+                    if (motion_ready && command_available) {
+                        motion_planners[slave].target_position =
+                            command_input.latest.positions[slave - 1];
+                        rxpdo[slave].target_position = plan_trajectory(
+                            &motion_planners[slave], txpdo[slave].actual_position,
                             static_cast<double>(cycletime) / NSEC_PER_SEC);
                     } else {
-                        rxpdo.target_position = txpdo.actual_position;
-                        g_motion_planner.initialized = false;
+                        // Hold each slave at its own position until all are
+                        // ready. Re-seed its planner when motion resumes.
+                        rxpdo[slave].target_position = txpdo[slave].actual_position;
+                        motion_planners[slave].initialized = false;
                     }
+                    memcpy(ec_slave[slave].outputs, &rxpdo[slave], sizeof(rxpdo_t));
                 }
 
-                // Send PDO data to the slaves
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(ec_slave[slave].outputs, &rxpdo, sizeof(rxpdo_t));
-                }
-
-                if (step < 1200) {
+                if (step < 1200 && next_state_ready) {
                     step++;
                 }
             }
@@ -759,8 +823,10 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                 ec_sync(ec_DCtime, cycletime, &toff);
             }
 
-            // Send process data
+            // EtherCAT transmission takes priority over optional viewer feedback.
             ec_send_processdata();
+            if (wkc >= expectedWKC && dorun % 10 == 0)
+                publish_feedback(command_socket_fd, command_input, feedback);
         }
 
         // Monitor cycle time
@@ -773,18 +839,24 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
 
         // Skip publication if the main thread is copying the previous sample.
         if (pthread_mutex_trylock(&status_mutex) == 0) {
-            cycle_status.statusword = txpdo.statusword;
-            cycle_status.actual_position = txpdo.actual_position;
-            cycle_status.target_position = rxpdo.target_position;
-            cycle_status.destination_position = have_command.load(std::memory_order_acquire)
-                ? commanded_position.load(std::memory_order_relaxed) : rxpdo.target_position;
-            cycle_status.cycle_number = dorun;
-            cycle_status.actual_velocity = txpdo.actual_velocity;
-            cycle_status.actual_torque = txpdo.actual_torque;
-            cycle_status.workcounter = wkc;
-            cycle_status.cycle_ns = cycle_time_ns;
-            cycle_status.overruns = cycle_overruns;
-            cycle_status.sleep_errors = sleep_errors;
+            for (int slave = 1; slave <= ec_slavecount; slave++) {
+                CycleStatus &status = cycle_status[slave];
+                status.statusword = txpdo[slave].statusword;
+                status.actual_position = txpdo[slave].actual_position;
+                status.target_position = rxpdo[slave].target_position;
+                status.destination_position = command_input.available
+                    ? command_input.latest.positions[slave - 1] : rxpdo[slave].target_position;
+                status.cycle_number = dorun;
+                status.actual_velocity = txpdo[slave].actual_velocity;
+                status.actual_torque = txpdo[slave].actual_torque;
+                status.workcounter = wkc;
+                status.cycle_ns = cycle_time_ns;
+                status.overruns = cycle_overruns;
+                status.sleep_errors = sleep_errors;
+                status.rejected_commands = command_input.rejected;
+                status.command_error = command_input.receive_error;
+                status.feedback_error = command_input.feedback_error;
+            }
             pthread_mutex_unlock(&status_mutex);
         }
     }
@@ -796,8 +868,8 @@ int test_count_sum = 100;
 int test_count = 0;
 float correct_rate = 0;
 
-// Advance one CSP setpoint using the real PDO period. The socket thread only
-// publishes a destination; this function never waits for a move to finish.
+// Advance one CSP setpoint using the real PDO period and the latest destination.
+// This function never waits for a move to finish.
 int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position,
                         double cycle_seconds) {
     if (!planner->initialized) {
@@ -833,96 +905,121 @@ int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position,
     return static_cast<int32_t>(llround(planner->current_position));
 }
 
-// Command socket thread function
-void* command_socket_thread(void*) {
-    int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-
-    // Check if socket creation was successful
+// Socket setup runs before the cyclic thread, never on its timing path.
+static int open_command_socket() {
+    const int sock = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (sock < 0) {
-        perror("socket");
-        return nullptr;
+        perror("CSP socket");
+        return -1;
     }
-
-    // Specify this is a UNIX socket
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-
-    // Use strncpy to safely copy the socket path into the address structure
-    strncpy(
-        addr.sun_path,
-        SOCKET_PATH,
-        sizeof(addr.sun_path) - 1
-    );
-
-    // Null-terminate the socket path
-    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
-
-    // Remove old socket file if previous program exited badly
-    unlink(SOCKET_PATH);
-
-
-    // Bind the socket to the specified path
-    if (bind(
-            sock,
-            reinterpret_cast<sockaddr*>(&addr),
-            sizeof(addr)
-        ) < 0)
-    {
-        perror("bind");
+    strncpy(addr.sun_path, CSP_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+    // Do not unlink another running master's socket.
+    if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        const int bind_error = errno;
+        fprintf(stderr, "CSP socket bind: %s\n", strerror(bind_error));
+        if (bind_error == EADDRINUSE)
+            fprintf(stderr, "If no CSP master is running, remove stale %s and retry.\n",
+                    CSP_SOCKET_PATH);
         close(sock);
-        return nullptr;
+        return -1;
     }
-
-    printf(
-        "CSP command socket listening at %s\n",
-        SOCKET_PATH
-    );
-
-    while (1)
-    {
-        int32_t target;
-
-        ssize_t received =
-            recv(
-                sock,
-                &target,
-                sizeof(target),
-                MSG_TRUNC
-            );
-
-        if (received < 0) {
-            if (errno == EINTR)
-                continue;
-            perror("recv");
-            break; // A permanent error must not turn into a busy loop.
+    // Allow the invoking desktop user to command a master launched with sudo,
+    // without making the motor command socket writable by every local user.
+    const char *sudo_uid = std::getenv("SUDO_UID");
+    if (geteuid() == 0 && sudo_uid != nullptr) {
+        char *end = nullptr;
+        errno = 0;
+        const unsigned long owner = std::strtoul(sudo_uid, &end, 10);
+        if (errno != 0 || end == sudo_uid || *end != '\0' ||
+            owner >= static_cast<unsigned long>(static_cast<uid_t>(-1))) {
+            fprintf(stderr, "Invalid SUDO_UID for CSP socket ownership\n");
+            close(sock);
+            unlink(CSP_SOCKET_PATH);
+            return -1;
         }
-        if (received != static_cast<ssize_t>(sizeof(target))) {
-            fprintf(stderr, "Ignoring command: expected one int32_t target.\n");
-            continue;
-        }
-
-        {
-            commanded_position.store(
-                target,
-                std::memory_order_relaxed
-            );
-
-            have_command.store(
-                true,
-                std::memory_order_release
-            );
-
-            // The main thread reports the goal; never wait for terminal output here.
+        if (chown(CSP_SOCKET_PATH, static_cast<uid_t>(owner), static_cast<gid_t>(-1)) < 0) {
+            perror("CSP socket chown");
+            close(sock);
+            unlink(CSP_SOCKET_PATH);
+            return -1;
         }
     }
-
-    close(sock);
-    unlink(SOCKET_PATH);
-
-    return nullptr;
+    if (chmod(CSP_SOCKET_PATH, S_IRUSR | S_IWUSR) < 0) {
+        perror("CSP socket chmod");
+        close(sock);
+        unlink(CSP_SOCKET_PATH);
+        return -1;
+    }
+    printf("CSP command socket: %s (six positions, slave 1 through 6)\n", CSP_SOCKET_PATH);
+    return sock;
 }
 
-// Modify the main function to start the server thread
+static void poll_commands(int sock, CommandInput &input) {
+    if (input.receive_error != 0)
+        return;
+
+    // Bound syscall work even if a sender continuously fills the queue.
+    // Under overload the remaining messages are consumed on subsequent ticks.
+    constexpr unsigned MAX_COMMANDS_PER_TICK = 32;
+    for (unsigned n = 0; n < MAX_COMMANDS_PER_TICK; ++n) {
+        CspCommand candidate{};
+        sockaddr_un sender{};
+        socklen_t sender_length = sizeof(sender);
+        const ssize_t received = recvfrom(sock, &candidate, sizeof(candidate),
+            MSG_DONTWAIT | MSG_TRUNC, reinterpret_cast<sockaddr*>(&sender), &sender_length);
+        if (received < 0) {
+            const int error = errno;
+            if (error == EAGAIN || error == EWOULDBLOCK)
+                return; // Empty queue: keep advancing toward the last destinations.
+            if (error == EINTR)
+                continue; // Retries also count against this tick's limit.
+            input.receive_error = error;
+            return; // Main thread reports the error; never print in this loop.
+        }
+        if (received == sizeof(CSP_SUBSCRIBE) &&
+            memcmp(&candidate, CSP_SUBSCRIBE, sizeof(CSP_SUBSCRIBE)) == 0) {
+            // Only a bound client has an address to receive feedback. A new
+            // subscriber replaces the previous viewer; CLI commands don't steal it.
+            if (sender_length > sizeof(sender.sun_family) && sender_length <= sizeof(sender)) {
+                input.feedback_peer = sender;
+                input.feedback_peer_length = sender_length;
+                input.feedback_error = 0;
+            } else {
+                ++input.rejected;
+            }
+            continue;
+        }
+        if (received != static_cast<ssize_t>(sizeof(candidate))) {
+            ++input.rejected; // Truncated/short/empty datagrams are consumed, not applied.
+            continue;
+        }
+        input.latest = candidate;
+        input.available = true;
+        // recv consumes the datagram. Later valid messages replace this one.
+    }
+}
+
+static void publish_feedback(int sock, CommandInput &input, const CspFeedback &feedback) {
+    if (input.feedback_peer_length == 0)
+        return;
+    const ssize_t sent = sendto(sock, &feedback, sizeof(feedback), MSG_DONTWAIT,
+        reinterpret_cast<const sockaddr*>(&input.feedback_peer), input.feedback_peer_length);
+    if (sent == static_cast<ssize_t>(sizeof(feedback))) {
+        input.feedback_error = 0;
+        return;
+    }
+    const int error = sent < 0 ? errno : EIO;
+    ++input.feedback_drops;
+    // A slow viewer never blocks the PDO cycle. Drop this sample and try the
+    // next fresh one; no telemetry backlog is kept in the real-time thread.
+    if (error == EAGAIN || error == EWOULDBLOCK || error == EINTR)
+        return;
+    input.feedback_error = error;
+    input.feedback_peer_length = 0; // Client heartbeat can subscribe again.
+}
+
 int main(int argc, char **argv) {
     needlf = FALSE;
     inOP = FALSE;
@@ -930,7 +1027,7 @@ int main(int argc, char **argv) {
     dorun = 0;
     ctime_thread = 1000; // 1ms cycle time
 
-    // Configuration, status printing, and command input use normal scheduling.
+    // Configuration and status printing use normal scheduling.
     // osal_thread_create_rt() requests FIFO priority 40 for the cyclic thread.
     struct sched_param param{};
     if (sched_setscheduler(0, SCHED_OTHER, &param) == -1) {
@@ -952,33 +1049,15 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    // Explicit normal scheduling keeps command input below the cyclic thread,
-    // even if the creator's scheduling policy is changed later.
-    pthread_t socket_thread;
-    pthread_attr_t attr;
-    int thread_error = pthread_attr_init(&attr);
-    if (thread_error != 0) {
-        fprintf(stderr, "pthread_attr_init: %s\n", strerror(thread_error));
+    command_socket_fd = open_command_socket();
+    if (command_socket_fd < 0)
         return EXIT_FAILURE;
-    }
-
-    struct sched_param socket_priority{};
-    thread_error = pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
-    if (thread_error == 0)
-        thread_error = pthread_attr_setschedparam(&attr, &socket_priority);
-    if (thread_error == 0)
-        thread_error = pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
-    if (thread_error == 0)
-        thread_error = pthread_create(&socket_thread, &attr, command_socket_thread, nullptr);
-    pthread_attr_destroy(&attr);
-    if (thread_error != 0) {
-        fprintf(stderr, "Cannot create command socket thread: %s\n", strerror(thread_error));
-        return EXIT_FAILURE;
-    }
+    // Process exit closes the fd; unlink only the pathname we successfully bound.
+    std::atexit(remove_command_socket);
 
     printf("Running on CPU core 3\n");
-    erob_test();
+    const int result = erob_test();
     printf("End program\n");
 
-    return EXIT_SUCCESS;
+    return result == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

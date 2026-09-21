@@ -1,0 +1,454 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="urt_arm_collapsed">
+  <link name="root" />
+  <link name="link4">
+    <inertial>
+      <mass value="0.673956728" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="6.73956729e-05" ixy="0" ixz="0" iyy="6.73956729e-05" iyz="0" izz="6.73956729e-05" />
+    </inertial>
+    <visual>
+      <origin xyz="-1.77092533e-13 0.00380104817 0.370000071" rpy="1.57079469 -4.68080571e-16 2.37764689e-16" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/_0_FSA36_14__8300_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.203922_0.203922_0.203922_0.000000_0.000000">
+        <color rgba="0.203922 0.203922 0.203922 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-1.75516381e-13 0.00380104817 0.370000071" rpy="1.57079469 -1.08834247e-15 -1.51781951e-17" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA36_14_Rotor.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.666667_0.666667_0.666667_0.000000_0.000000">
+        <color rgba="0.666667 0.666667 0.666667 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-3.37662193e-16 8.35880785e-07 0.33" rpy="-5.30717959e-06 -7.7127432e-16 2.80780411e-16" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA36_Bracket.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.658824_0.658824_0.658824_0.000000_0.000000">
+        <color rgba="0.658824 0.658824 0.658824 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-9.12098809e-18 -3.29994833e-17 -3.46944695e-18" rpy="8.32667268e-17 -1.46943276e-17 1.15960716e-16" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.231373_0.380392_0.705882_0.000000_0.000000">
+        <color rgba="0.231373 0.380392 0.705882 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-1.75544947e-16 7.96076938e-07 0.315" rpy="3.14159 -4.71434822e-16 -1.02701898e-16" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.647059_0.647059_0.647059_0.000000_0.000000">
+        <color rgba="0.647059 0.647059 0.647059 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-2.99583492e-16 8.35880785e-07 0.33" rpy="3.14159 -7.10975739e-16 2.72225378e-16" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_2.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link2">
+    <inertial>
+      <mass value="1.07297765" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.000107297765" ixy="0" ixz="0" iyy="0.000107297765" iyz="0" izz="0.000107297765" />
+    </inertial>
+    <visual>
+      <origin xyz="0.145830223 0.0410006661 -0.167491301" rpy="-3.14158968 -0.87266602 -3.14158694" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/_0_FSA36_14__8300_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.203922_0.203922_0.203922_0.000000_0.000000">
+        <color rgba="0.203922 0.203922 0.203922 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.145830223 0.0410006661 -0.167491301" rpy="-3.14159246 0.87266602 9.84273507e-06" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA36_14_Rotor.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.666667_0.666667_0.666667_0.000000_0.000000">
+        <color rgba="0.666667 0.666667 0.666667 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.117207627 0.0410004141 -0.139292112" rpy="2.44345867 -4.52749547e-07 1.5708015" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA36_Bracket_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.658824_0.658824_0.658824_0.000000_0.000000">
+        <color rgba="0.658824 0.658824 0.658824 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.00308641571 0.0169999747 -0.00268855385" rpy="-1.5708 0.872665 1.12268077e-15" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_3.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.0255140956 0.0409999732 0.030750465" rpy="1.57079941 0.698132346 -3.14158786" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_4.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.117207627 0.0410004141 -0.139292112" rpy="-0.698131327 -4.52749547e-07 1.5708015" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_5.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.647059_0.647059_0.647059_0.000000_0.000000">
+        <color rgba="0.647059 0.647059 0.647059 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0375020105 0.0409999733 -0.0443025619" rpy="1.57079941 0.698127654 -3.14158786" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_4.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.0226365041 0.0169999746 0.0279435157" rpy="-1.57079941 -0.698135 4.79504199e-06" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_6.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-1.0134005e-17 0.012 -1.13276062e-18" rpy="-2.67605853e-23 3.8740487e-22 -9.1539167e-23" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_7.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0403796349 0.0169999748 -0.0471095797" rpy="1.57079941 0.698127654 -3.14158786" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_6.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link3">
+    <inertial>
+      <mass value="0.8236641" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="8.236641e-05" ixy="0" ixz="0" iyy="8.236641e-05" iyz="0" izz="8.236641e-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0.0485000911 -0.0287 9.10954868e-08" rpy="-3.14159265 1.57079265 1.57079265" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/_0_FSA36_14__8300_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.203922_0.203922_0.203922_0.000000_0.000000">
+        <color rgba="0.203922 0.203922 0.203922 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0485000911 -0.0287 9.1095485e-08" rpy="3.14159265 1.57079265 1.57079265" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA36_14_Rotor.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.666667_0.666667_0.666667_0.000000_0.000000">
+        <color rgba="0.666667 0.666667 0.666667 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0485 -0.0295 7.37592997e-18" rpy="6.24500451e-17 4.06837336e-17 7.17436906e-18" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_9.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.658824_0.658824_0.658824_0.000000_0.000000">
+        <color rgba="0.658824 0.658824 0.658824 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="base_link">
+    <inertial>
+      <mass value="1.2921161" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.00012921161" ixy="0" ixz="0" iyy="0.00012921161" iyz="0" izz="0.00012921161" />
+    </inertial>
+    <visual>
+      <origin xyz="-1.09325918e-14 8.94385516e-12 0.0438" rpy="0 -0 1.5708" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/_0_FSA60_17_____1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.274510_0.274510_0.274510_0.000000_0.000000">
+        <color rgba="0.27451 0.27451 0.27451 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-4.37430181e-11 6.47922945e-11 0" rpy="0 -0 1.5708" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA60_17_Base.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-1.47668613e-14 8.94373512e-12 0.0438" rpy="0 -0 1.5708" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Rotor.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.917647_0.917647_0.917647_0.000000_0.000000">
+        <color rgba="0.917647 0.917647 0.917647 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link1">
+    <inertial>
+      <mass value="1.1616267" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.00011616267" ixy="0" ixz="0" iyy="0.00011616267" iyz="0" izz="0.00011616267" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.0197 -7.23625023e-08 0.0840001495" rpy="1.5708 -5.63764877e-22 1.5708" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/_0_FSA60_17_____1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.274510_0.274510_0.274510_0.000000_0.000000">
+        <color rgba="0.27451 0.27451 0.27451 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="7.97972042e-17 2.21946677e-17 0.039" rpy="-8.15367e-21 -9.10099e-23 1.5708" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA60_17_Mount.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.647059_0.647059_0.647059_0.000000_0.000000">
+        <color rgba="0.647059 0.647059 0.647059 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-4.6169318e-28 1.37773e-18 2.8749407e-33" rpy="-1.22815627e-38 -2.45166695e-39 -3.09060472e-44" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA60_17_Rotor__Mount.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.0197 -7.23625024e-08 0.0840001495" rpy="1.5708 -1.559583e-22 1.5708" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Rotor.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.917647_0.917647_0.917647_0.000000_0.000000">
+        <color rgba="0.917647 0.917647 0.917647 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link6">
+    <inertial>
+      <mass value="0.00033959712" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="1e-06" ixy="0" ixz="0" iyy="1e-06" iyz="0" izz="1e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.0126001059 -0.165783489 0.0022816459" rpy="2.34063371e-06 0.348012654 -6.56103735e-06" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Block.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.647059_0.647059_0.647059_0.000000_0.000000">
+        <color rgba="0.647059 0.647059 0.647059 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0420818057 -0.156093429 0.0856886369" rpy="3.14159 1.22278735 3.14159" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Gripper.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.00554077611 -0.156091703 -0.0985130176" rpy="-7.34653534e-06 -1.22278735 -2.65347105e-06" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Gripper.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0118246819 -0.176091929 -0.0154562385" rpy="1.91881265 -3.45299224e-06 1.57079242" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Linkage_Connector.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0191227346 -0.176093027 0.00466087931" rpy="-1.91881265 9.47643981e-07 -1.57080714" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Linkage_Connector.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0178061822 -0.156092033 -0.0165623036" rpy="1.22278735 9.47643977e-07 -1.57080714" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Linkage_No_Connector.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0244221715 -0.156093038 0.00167471058" rpy="-1.22278735 -3.45299227e-06 1.57079242" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Linkage_No_Connector.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0.0139779589 -0.236179132 -0.0051210112" rpy="1.5708 1.22278 3.14159" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Main_Body.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-4.36666706e-17 -0.0877 -2.85314405e-17" rpy="3.14159 1.22262 3.14159" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Part_1_8.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.972549_0.529412_0.003922_0.000000_0.000000">
+        <color rgba="0.972549 0.529412 0.00392157 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link5">
+    <inertial>
+      <mass value="0.24837018" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="2.4837018e-05" ixy="0" ixz="0" iyy="2.4837018e-05" iyz="0" izz="2.4837018e-05" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.119500029 0.0404999674 -1.04686345e-07" rpy="-3.14159265 -1.57079265 1.57079735" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/FSA25_Mount.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.647059_0.647059_0.647059_0.000000_0.000000">
+        <color rgba="0.647059 0.647059 0.647059 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.0813501031 0.0496056875 0.0176498028" rpy="0.04365 3.67097808e-06 -3.14159164" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/GBT_819_1_2016__4_0001_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.000000_0.000000_0.000000_0.000000_0.000000">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.1 0.012 -2.6008759e-19" rpy="-2.08166817e-17 3.48977574e-17 1.54481022e-16" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/L5.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
+        <color rgba="0.615686 0.811765 0.929412 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.0779001031 0.0496056489 0.0176497673" rpy="0.04365 3.67097808e-06 -3.14159164" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/M2H8_6_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.960784_0.960784_0.960784_0.000000_0.000000">
+        <color rgba="0.960784 0.960784 0.960784 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="-0.081349955 0.0313226036 -0.0176163075" rpy="-3.09794531 3.6732051e-06 -3.14159163" />
+      <geometry>
+        <mesh filename="../meshes_onshape_rigid_stl/Rotor_1.stl" scale="1 1 1" />
+      </geometry>
+      <material name="0.847059_0.847059_0.847059_0.000000_0.000000">
+        <color rgba="0.847059 0.847059 0.847059 1" />
+      </material>
+    </visual>
+  </link>
+  <joint name="root_to_base" type="fixed">
+    <parent link="root" />
+    <child link="base_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+  <joint name="revolute_1" type="continuous">
+    <origin xyz="-1.47654813e-14 8.94373478e-12 0.0845" rpy="-9.60991e-23 -3.21606e-22 -1.57079531" />
+    <axis xyz="0 1.17549435e-38 -1" />
+    <parent link="base_link" />
+    <child link="link1" />
+  </joint>
+  <joint name="revolute_2" type="continuous">
+    <origin xyz="0.021 7.71369453e-08 0.084" rpy="-0.78539449 -1.57079113 -0.78539449" />
+    <axis xyz="0 -1 2.67605853e-23" />
+    <parent link="link1" />
+    <child link="link2" />
+  </joint>
+  <joint name="revolute_3" type="continuous">
+    <origin xyz="0.121010354 0.041000428 -0.188317585" rpy="3.0006694 0.698133944 -3.14158374" />
+    <axis xyz="-1 -2.77555756e-17 -2.77555756e-16" />
+    <parent link="link2" />
+    <child link="link3" />
+  </joint>
+  <joint name="revolute_4" type="continuous">
+    <origin xyz="0.0484999721 -0.0611 -2.79163606e-08" rpy="-1.5708 -3.6732051e-06 3.14158898" />
+    <axis xyz="-1.38777878e-17 -8.32667268e-17 -1" />
+    <parent link="link3" />
+    <child link="link4" />
+  </joint>
+  <joint name="revolute_5" type="continuous">
+    <origin xyz="-1.74638573e-13 -0.0285989518 0.370000124" rpy="5.30717959e-06 -2.65358979e-06 3.14159265" />
+    <axis xyz="-1.66533454e-16 -1 2.08166817e-17" />
+    <parent link="link4" />
+    <child link="link5" />
+  </joint>
+  <joint name="revolute_6" type="continuous">
+    <origin xyz="-0.118800029 0.0404281961 3.33587926e-05" rpy="3.14158558 -0.523594 1.57079589" />
+    <axis xyz="1.66533454e-16 1 1.11022302e-16" />
+    <parent link="link5" />
+    <child link="link6" />
+  </joint>
+</robot>
