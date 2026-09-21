@@ -38,6 +38,9 @@ add_executable(eRob_CSP eRob_CSP.cpp)
 target_link_libraries(eRob_CSP cia402 soem)
 install(TARGETS eRob_CSP DESTINATION bin)
 
+add_executable(CSP_command CSP_command.cpp)
+install(TARGETS CSP_command DESTINATION bin)
+
 # add a test program
 #add_executable(eRob_TC eRob_TC.cpp)
 #target_link_libraries(eRob_TC cia402 soem)
