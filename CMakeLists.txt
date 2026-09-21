@@ -3,7 +3,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake/Modu
 project(SOEM
     DESCRIPTION "Simple Open EtherCAT Master"
     VERSION 1.4.0
-    LANGUAGES C
+    LANGUAGES C CXX
 )
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)   # Default to installing in SOEM source directory
@@ -97,6 +97,8 @@ target_include_directories(soem
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/oshw/${OS}>
     $<INSTALL_INTERFACE:include/soem>
 )
+
+add_subdirectory(cia402)
 
 message(STATUS "LIB_DIR: ${SOEM_LIB_INSTALL_DIR}")
 

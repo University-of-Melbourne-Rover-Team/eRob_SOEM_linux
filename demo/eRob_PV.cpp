@@ -30,10 +30,6 @@
 
 #include <sched.h>
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-
 // Global variables for EtherCAT communication
 char IOmap[4096]; // I/O mapping for EtherCAT
 int expectedWKC; // Expected Work Counter
@@ -64,8 +60,14 @@ void add_timespec(struct timespec *ts, int64 addtime);
 #define stack64k (64 * 1024) // Stack size for threads
 #define NSEC_PER_SEC 1000000000   // Number of nanoseconds in one second
 #define EC_TIMEOUTMON 5000        // Timeout for monitoring in microseconds
-#define MAX_VELOCITY 30000        // Reduced maximum velocity (from 200000 to 30000)
-#define MAX_ACCELERATION 50000    // Reduced maximum acceleration (from 500000 to 50000)
+
+// motor parameters
+#define MAX_VELOCITY 50000        // Maximum velocity
+#define MAX_ACCELERATION 50000    // Maximum acceleration
+#define QUICK_STOP_DECEL 40000    // quick stop deceleration
+#define PROFILE_ACCEL 30000
+#define PROFILE_DECEL 30000
+#define TARGET_VELOCITY 40000
 
 // Conversion units for the servomotor
 float Cnt_to_deg = 0.000686645; // Conversion factor from counts to degrees
@@ -74,7 +76,7 @@ int8_t SLAVE_ID; // Slave ID for EtherCAT communication
 // Structure for RXPDO (Control data sent to slave)
 typedef struct {
     uint16_t controlword;      // 0x6040:0, 16 bits
-    int32_t target_position;   // 0x607A:0, 32 bits
+    int32_t target_velocity;   // 0x60FF:0, 32 bits
     uint8_t mode_of_operation; // 0x6060:0, 8 bits
     uint8_t padding;           // 8 bits padding for alignment
 } __attribute__((__packed__)) rxpdo_t;
@@ -87,69 +89,39 @@ typedef struct {
     int16_t actual_torque;    // 0x6077:0, 16 bits
 } __attribute__((__packed__)) txpdo_t;
 
-// Add these global variables after the other global declarations
+// Global variables
 volatile int target_position = 0;
 pthread_mutex_t target_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t target_position_cond = PTHREAD_COND_INITIALIZER;
 bool target_updated = false;
 int32_t received_target = 0;
 
-// Add in the global variable declaration section at the beginning of the file
-rxpdo_t rxpdo;  // Global variable, used for sending data to slaves
-txpdo_t txpdo;  // Global variable, used for receiving data from slaves
+/** 
+ * MotorStatus and update_motor_status() not used
+ * To do:
+ *  - use this code
+ * */
 
-// 在全局变量区域添加
-struct MotorStatus {
-    bool is_operational;
-    uint16_t status_word;
-    int32_t actual_position;
-    int32_t actual_velocity;
-    int16_t actual_torque;
-} motor_status;
+// struct MotorStatus {
+//     bool is_operational;
+//     uint16_t status_word;
+//     int32_t actual_position;
+//     int32_t actual_velocity;
+//     int16_t actual_torque;
+// } motor_status;
 
-
-void update_motor_status(int slave_id);  // Add function declaration
-
-// 在文件开头，其他宏定义之后添加
-#undef MAX_VELOCITY  // Ensure there are no naming conflicts
-#undef MAX_ACCELERATION
-
-// 在全局变量声明区域添加
-struct MotionPlanner {
-    int32_t start_position;    // Start position
-    int32_t target_position;   // Final target position
-    int32_t smooth_target;     // Smoothed target position for transition
-    int32_t current_position;  // Current planned position
-    double current_velocity;   // Current velocity
-    double start_time;         // Start time
-    double total_time;         // Total time
-    double current_time;       // Current time
-    bool is_moving;            // Movement state
+// // Function to update motor status information
+// void update_motor_status(int slave_id) {
+//     // Update status information from TXPDO
+//     motor_status.status_word = txpdo.statusword;
+//     motor_status.actual_position = txpdo.actual_position;
+//     motor_status.actual_velocity = txpdo.actual_velocity;
+//     motor_status.actual_torque = txpdo.actual_torque;
     
-    // Motion parameters
-    static constexpr double MAX_VELOCITY = 50000.0;     // Maximum velocity limit
-    static constexpr double CYCLE_TIME = 0.0005;          // Cycle time (1ms)
-    static constexpr double SMOOTH_FACTOR = 0.002;        // Smoothing factor for target position
-
-    // Quintic polynomial coefficients
-    double a0, a1, a2, a3, a4, a5;
-
-    MotionPlanner() : start_position(0), target_position(0), smooth_target(0),
-                      current_position(0), current_velocity(0.0),
-                      start_time(0.0), total_time(0.0), current_time(0.0),
-                      is_moving(false) {}
-};
-
-// Define static member variables
-constexpr double MotionPlanner::MAX_VELOCITY;
-constexpr double MotionPlanner::CYCLE_TIME;
-constexpr double MotionPlanner::SMOOTH_FACTOR;
-
-// Global variable
-MotionPlanner g_motion_planner;
-
-// Function declaration
-int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position);
+//     // Check status word to determine if motor is operational
+//     // Bits 0-3 should be 0111 for enabled and ready state
+//     motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
+// }
 
 //##################################################################################################
 // Function: Set the CPU affinity for a thread
@@ -174,6 +146,8 @@ int erob_test();
 uint16_t data_R;
 
 int erob_test() {
+    // Have to wait 8 seconds after power before sending commands (p.g. 46).
+
     int rdl; // Variable to hold read data length
     SLAVE_ID = 1; // Set the slave ID to 1
     int i, j, oloop, iloop, chk; // Loop control variables
@@ -233,50 +207,48 @@ int erob_test() {
     //3.- Map RXPOD
     printf("__________STEP 3___________________\n");
 
-    // Clear RXPDO mapping
-    int retval = 0; // Variable to hold the return value of SDO write operations
-    uint16 map_1c12; // Variable to hold the mapping for PDO
-    uint8 zero_map = 0; // Variable to clear the PDO mapping
-    uint32 map_object; // Variable to hold the mapping object
-    uint16 clear_val = 0x0000; // Value to clear the mapping
+    // Modify PDO mapping configuration
+    int retval = 0;
+    uint16 map_1c12;
+    uint8 zero_map = 0;
+    uint32 map_object;
+    uint16 clear_val = 0x0000;
 
-    for(int i = 1; i <= ec_slavecount; i++) { // Loop through each slave
-        // 1. First, disable PDO
+    for(int i = 1; i <= ec_slavecount; i++) {
+        // Clear RXPDO mapping
         retval += ec_SDOwrite(i, 0x1600, 0x00, FALSE, sizeof(zero_map), &zero_map, EC_TIMEOUTSAFE);
         
-        // 2. Configure new PDO mapping
-        // Control Word
-        map_object = 0x60400010;  // 0x6040:0 Control Word, 16 bits
+        // Control word (0x6040:0, 16 bits)
+        map_object = 0x60400010;
         retval += ec_SDOwrite(i, 0x1600, 0x01, FALSE, sizeof(map_object), &map_object, EC_TIMEOUTSAFE);
         
-        // Target Position
-        map_object = 0x607A0020;  // 0x607A:0 Target Position, 32 bits
+        // Target velocity (0x60FF:0, 32 bits)
+        map_object = 0x60FF0020;
         retval += ec_SDOwrite(i, 0x1600, 0x02, FALSE, sizeof(map_object), &map_object, EC_TIMEOUTSAFE);
         
-        // Mode of Operation
-        map_object = 0x60600008;  // 0x6060:0 Mode of Operation, 8 bits
+        // Operation mode (0x6060:0, 8 bits)
+        map_object = 0x60600008;
         retval += ec_SDOwrite(i, 0x1600, 0x03, FALSE, sizeof(map_object), &map_object, EC_TIMEOUTSAFE);
         
-        // Padding (8 bits)
-        map_object = 0x00000008;  // 8 bits padding
+        // Padding (8 bits padding)
+        map_object = 0x00000008;
         retval += ec_SDOwrite(i, 0x1600, 0x04, FALSE, sizeof(map_object), &map_object, EC_TIMEOUTSAFE);
         
-        // Set number of mapped objects
-        uint8 map_count = 4;
+        uint8 map_count = 4;  // Now there are 4 objects, including padding
         retval += ec_SDOwrite(i, 0x1600, 0x00, FALSE, sizeof(map_count), &map_count, EC_TIMEOUTSAFE);
         
-        // 4. Configure RXPDO allocation
-        clear_val = 0x0000; // Clear the mapping
+        // Configure RXPDO allocation
+        clear_val = 0x0000;
         retval += ec_SDOwrite(i, 0x1c12, 0x00, FALSE, sizeof(clear_val), &clear_val, EC_TIMEOUTSAFE);
-        map_1c12 = 0x1600; // Set the mapping to the new PDO
+        map_1c12 = 0x1600;
         retval += ec_SDOwrite(i, 0x1c12, 0x01, FALSE, sizeof(map_1c12), &map_1c12, EC_TIMEOUTSAFE);
-        map_1c12 = 0x0001; // Set the mapping index
+        map_1c12 = 0x0001;
         retval += ec_SDOwrite(i, 0x1c12, 0x00, FALSE, sizeof(map_1c12), &map_1c12, EC_TIMEOUTSAFE);
     }
 
-    printf("PDO mapping configuration result: %d\n", retval);
+    printf("RXPDO mapping configuration result: %d\n", retval);
     if (retval < 0) {
-        printf("PDO mapping failed\n");
+        printf("RXPDO mapping failed\n");
         return -1;
     }
 
@@ -288,11 +260,10 @@ int erob_test() {
     retval = 0;
     uint16 map_1c13;
     for(int i = 1; i <= ec_slavecount; i++) {
-        // First, clear the TXPDO mapping
+        // Clear TXPDO mapping
         clear_val = 0x0000;
         retval += ec_SDOwrite(i, 0x1A00, 0x00, FALSE, sizeof(clear_val), &clear_val, EC_TIMEOUTSAFE);
 
-        // Configure TXPDO mapping entries
         // Status Word (0x6041:0, 16 bits)
         map_object = 0x60410010;
         retval += ec_SDOwrite(i, 0x1A00, 0x01, FALSE, sizeof(map_object), &map_object, EC_TIMEOUTSAFE);
@@ -309,22 +280,18 @@ int erob_test() {
         map_object = 0x60770010;
         retval += ec_SDOwrite(i, 0x1A00, 0x04, FALSE, sizeof(map_object), &map_object, EC_TIMEOUTSAFE);
 
-        // Set the number of mapped objects (4 objects)
-        uint8 map_count = 4;
+        uint8 map_count = 4;  // Ensure mapping 4 objects
         retval += ec_SDOwrite(i, 0x1A00, 0x00, FALSE, sizeof(map_count), &map_count, EC_TIMEOUTSAFE);
 
-        // Configure TXPDO assignment
-        // First, clear the assignment
+        // Correctly configure TXPDO allocation
         clear_val = 0x0000;
         retval += ec_SDOwrite(i, 0x1C13, 0x00, FALSE, sizeof(clear_val), &clear_val, EC_TIMEOUTSAFE);
-
-        // Assign TXPDO to 0x1A00
         map_1c13 = 0x1A00;
         retval += ec_SDOwrite(i, 0x1C13, 0x01, FALSE, sizeof(map_1c13), &map_1c13, EC_TIMEOUTSAFE);
-
-        // Set the number of assigned PDOs (1 PDO)
         map_1c13 = 0x0001;
         retval += ec_SDOwrite(i, 0x1C13, 0x00, FALSE, sizeof(map_1c13), &map_1c13, EC_TIMEOUTSAFE);
+
+
     }
 
     printf("Slave %d TXPDO mapping configuration result: %d\n", SLAVE_ID, retval);
@@ -366,27 +333,53 @@ int erob_test() {
     printf("__________STEP 5___________________\n");
 
     // Ensure all slaves are in PRE-OP state
+    ec_readstate();
     for(int i = 1; i <= ec_slavecount; i++) {
-        if(ec_slave[i].state != EC_STATE_PRE_OP) { // Check if the slave is not in PRE-OP state
-            printf("Slave %d not in PRE-OP state. Current state: %d\n", i, ec_slave[i].state);
-            return -1; // Return error if any slave is not in PRE-OP state
+        if(ec_slave[i].state != EC_STATE_PRE_OP) {
+            printf("Slave %d not in PRE-OP state. Current state: %d, StatusCode=0x%4.4x : %s\n", 
+                   i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
+            return -1;
         }
     }
 
-    // Configure Distributed Clock (DC)
-    ec_configdc(); // Set up the distributed clock for synchronization
+    // Configure distributed clock
+    printf("Configuring DC...\n");
+    ec_configdc();
+    osal_usleep(200000);  // Wait for DC configuration to take effect
+
+    // Request to switch to SAFE-OP state before confirming DC configuration
+    for(int i = 1; i <= ec_slavecount; i++) {
+        printf("Slave %d DC status: 0x%4.4x\n", i, ec_slave[i].DCactive);
+        if(ec_slave[i].hasdc && !ec_slave[i].DCactive) {
+            printf("DC not active for slave %d\n", i);
+        }
+    }
 
     // Request to switch to SAFE-OP state
-    ec_slave[0].state = EC_STATE_SAFE_OP; // Set the first slave to SAFE-OP state
-    ec_writestate(0); // Write the state change to the slave
+    printf("Requesting SAFE_OP state...\n");
+    ec_slave[0].state = EC_STATE_SAFE_OP;
+    ec_writestate(0);
+    osal_usleep(200000);  // Give enough time for state transition
 
-    // Wait for the state transition
-    if (ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) == EC_STATE_SAFE_OP) {
-        printf("Successfully changed to SAFE_OP state\n"); // Confirm successful state change
-    } else {
-        printf("Failed to change to SAFE_OP state\n");
-        return -1; // Return error if state change fails
+    // Check the result of the state transition
+    chk = 40;
+    do {
+        ec_readstate();
+        for(int i = 1; i <= ec_slavecount; i++) {
+            if(ec_slave[i].state != EC_STATE_SAFE_OP) {
+                printf("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s\n",
+                       i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
+            }
+        }
+        osal_usleep(100000);
+    } while (chk-- && (ec_slave[0].state != EC_STATE_SAFE_OP));
+
+    if (ec_slave[0].state != EC_STATE_SAFE_OP) {
+        printf("Failed to reach SAFE_OP state\n");
+        return -1;
     }
+
+    printf("Successfully reached SAFE_OP state\n");
 
     // Calculate the expected Work Counter (WKC)
     expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC; // Calculate expected WKC based on outputs and inputs
@@ -429,10 +422,12 @@ int erob_test() {
 
     // Start the EtherCAT thread for real-time processing
     start_ecatthread_thread = TRUE; // Flag to indicate that the EtherCAT thread should start
-    osal_thread_create_rt(&thread1, stack64k * 2, (void *)&ecatthread, (void *)&ctime_thread); // Create the real-time EtherCAT thread
+    osal_thread_create_rt(&thread1, stack64k * 2, (void *)&ecatthread, /*param=*/(void *)&ctime_thread); // Create the real-time EtherCAT thread
     // set_thread_affinity(*thread1, 4); // Optional: Set CPU affinity for the thread
     osal_thread_create(&thread2, stack64k * 2, (void *)&ecatcheck, NULL); // Create the EtherCAT check thread
     // set_thread_affinity(*thread2, 5); // Optional: Set CPU affinity for the thread
+    printf("wait one second before step 8 ... \n");
+    osal_usleep(1000000);
     printf("___________________________________________\n");
 
     my_RA = 0; // Reset read access variable
@@ -463,6 +458,7 @@ int erob_test() {
     // Read and display the state of all slaves
     ec_readstate(); // Read the state of all slaves
     for (int i = 1; i <= ec_slavecount; i++) {
+        printf("Alstatuscode = 0x%04X : %s," "wkc=%d/%d\n", ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode), wkc, expectedWKC);
         printf("Slave %d: Type %d, Address 0x%02x, State Machine actual %d, required %d\n", 
                i, ec_slave[i].eep_id, ec_slave[i].configadr, ec_slave[i].state, EC_STATE_OPERATIONAL); // Print slave information
         printf("Name: %s\n", ec_slave[i].name); // Print the name of the slave
@@ -475,18 +471,43 @@ int erob_test() {
     if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
         printf("Operational state reached for all slaves.\n");
         
-
-        uint8 operation_mode = 8;
-        uint16_t Control_Word = 128;
-
+        uint8 operation_mode = MODE_PROFILE_VELOCITY;
+        uint16_t Control_Word = 0;
+        int32_t Max_Velocity = MAX_VELOCITY;
+        int32_t Max_Acceleration = MAX_ACCELERATION;
+        int32_t Quick_Stop_Decel = QUICK_STOP_DECEL;
+        int32_t Profile_Accel = PROFILE_ACCEL;
+        int32_t Profile_Decel = PROFILE_DECEL;
+        
         for (int i = 1; i <= ec_slavecount; i++) {
+            // 先禁用电机
+            Control_Word = 0x0000;
             ec_SDOwrite(i, 0x6040, 0x00, FALSE, sizeof(Control_Word), &Control_Word, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x6060, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
+            osal_usleep(100000);
 
+            // 设置操作模式为CSV
+            ec_SDOwrite(i, 0x6060, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
+            osal_usleep(100000);
+
+            // 设置速度相关参数
+            ec_SDOwrite(i, 0x6080, 0x00, FALSE, sizeof(Max_Velocity), &Max_Velocity, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, 0x60C5, 0x00, FALSE, sizeof(Max_Acceleration), &Max_Acceleration, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, 0x6085, 0x00, FALSE, sizeof(Quick_Stop_Decel), &Quick_Stop_Decel, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, 0x6083, 0x00, FALSE, sizeof(Profile_Accel), &Profile_Accel, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, 0x6084, 0x00, FALSE, sizeof(Profile_Decel), &Profile_Decel, EC_TIMEOUTSAFE);
+            
+            osal_usleep(100000);
+            
+            // 验证模式是否设置成功
+            uint8 actual_mode;
+            int size = sizeof(actual_mode);
+            if (ec_SDOread(i, 0x6061, 0x00, FALSE, &size, &actual_mode, EC_TIMEOUTSAFE) > 0) {
+                printf("Actual operation mode: %d\n", actual_mode);
+            }
         }
-  // The main loop only needs to keep the program running
+
         while(1) {
-            osal_usleep(100000); // Sleep for 100ms to reduce CPU usage
+            osal_usleep(100000);
         }
     }
 
@@ -632,6 +653,17 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr) {
  * the specified cycle time.
  */
 OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
+
+    // note: index starts from 1 not 0
+    rxpdo_t rxpdo[ec_slavecount + 1];  // array storing data sent to slaves
+    txpdo_t txpdo[ec_slavecount + 1];  // array storing data receivedfrom slaves
+
+    rxpdo[0] = {};    // 0th element not used
+    txpdo[0] = {};    // 0th element not used
+
+    const int mode_of_operation = MODE_PROFILE_VELOCITY;
+
+    int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
     int ht;
     int64 cycletime;
@@ -641,55 +673,50 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
     long cycle_time_ns;
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    ht = (ts.tv_nsec / 1000000) + 1;
-    ts.tv_nsec = ht * 1000000;
+    ht = (ts.tv_nsec / 1'000'000) + 1;
+    ts.tv_nsec = ht * 1'000'000;
     if (ts.tv_nsec >= NSEC_PER_SEC) {
         ts.tv_sec++;
         ts.tv_nsec -= NSEC_PER_SEC;
     }
-    cycletime = *(int *)ptr * 1000;
+    cycletime = *ctime * 1000;
 
     toff = 0;
     dorun = 0;
     
-    // Initialize PDO data
-    rxpdo_t rxpdo;
-    txpdo_t txpdo;
-    
-    rxpdo.controlword = 0x0080;
-    rxpdo.target_position = 0;
-    rxpdo.mode_of_operation = 8;
-    rxpdo.padding = 0;
-    
-    // Send initial process data
+    // configure RXPDO data on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        memcpy(ec_slave[slave].outputs, &rxpdo, sizeof(rxpdo_t));
+        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
+        rxpdo[slave].target_velocity = 0; 
+        rxpdo[slave].mode_of_operation = mode_of_operation;
+        rxpdo[slave].padding = 0;
+    }
+    
+    // send RXPDO data to slaves
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
     }
     ec_send_processdata();
+    wkc = ec_receive_processdata(EC_TIMEOUTRET);  // 确保第一次通信成功
 
     int step = 0;
-    bool need_update = false;
-    int32_t new_target = 0;
+    int retry_count = 0;
+    const int MAX_RETRY = 3;
 
     while (1) {
         clock_gettime(CLOCK_MONOTONIC, &cycle_start);
         
         add_timespec(&ts, cycletime + toff);
         if (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, &tleft) != 0) {
-            // If sleep is interrupted, record the error
             missed_cycles++;
-            printf("WARNING: Clock sleep interrupted, missed cycles: %d\n", missed_cycles);
             if (missed_cycles >= MAX_MISSED_CYCLES) {
-                printf("ERROR: Too many missed cycles, attempting recovery...\n");
-                // Reset the counter
-                missed_cycles = 0;
-                // Resynchronize the clock
                 clock_gettime(CLOCK_MONOTONIC, &ts);
                 ts.tv_nsec = ((ts.tv_nsec / 1000000) + 1) * 1000000;
                 if (ts.tv_nsec >= NSEC_PER_SEC) {
                     ts.tv_sec++;
                     ts.tv_nsec -= NSEC_PER_SEC;
                 }
+                missed_cycles = 0;
             }
         } else {
             missed_cycles = 0;
@@ -701,80 +728,123 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             // Receive process data
             wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
+            /**
+             * Working counter matched expected
+             * Detected the expected number of slaves
+             */
             if (wkc >= expectedWKC) {
-                // Retrieve the current motor status
+                retry_count = 0;  // Reset retry counter
+                
+                // store TXPDO data received from slave into local array
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(&txpdo, ec_slave[slave].inputs, sizeof(txpdo_t));
+                    memcpy(&(txpdo[slave]), ec_slave[slave].inputs, sizeof(txpdo_t));
                 }
 
-                // Check if there is a new target position
-                pthread_mutex_lock(&target_mutex);
-                need_update = target_updated;
-                if (need_update) {
-                    new_target = received_target;
-                    target_updated = false;
-                }
-                pthread_mutex_unlock(&target_mutex);
+                // CiA 402 State machine control
+                bool next_state_ready = true;   // indicates all slaves in the same state
 
-                // State machine control
-                if (step <= 400) {
-                    rxpdo.controlword = 0x0080;
-                    rxpdo.target_position = 0;
-                } else if (step <= 600) {
-                    rxpdo.controlword = 0x0006;
-                    rxpdo.target_position = txpdo.actual_position;
-                } else if (step <= 800) {
-                    rxpdo.controlword = 0x0007;
-                    rxpdo.target_position = txpdo.actual_position;
-                } else if (step <= 1000) {
-                    rxpdo.controlword = 0x000F;
-                    rxpdo.target_position = txpdo.actual_position;
-                } else {
-                    // Normal operational mode
-                    if (need_update) {
-                        g_motion_planner.target_position = new_target;
-                        g_motion_planner.is_moving = true;
+                if (step <= 1500) {
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;  // TO DO: fault reset is rising edge triggered
+                        rxpdo[slave].target_velocity = 0;
+                        // check all slaves in switch on disabled state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_SWITCH_ON_DISABLED) {
+                            next_state_ready = false;
+                        }
                     }
-
-                    // Execute trajectory planning
-                    int32_t planned_pos = plan_trajectory(&g_motion_planner, txpdo.actual_position);
-                    
-                    // Update output PDO
-                    rxpdo.controlword = 0x000F;
-                    rxpdo.target_position = txpdo.actual_position + 20;
-                    rxpdo.mode_of_operation = 8;
+                }
+                else if (step <= 1800) {
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = CW_SHUTDOWN_CMD;
+                        rxpdo[slave].target_velocity = 0;
+                        // check all slaves in ready to switch on state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_READY_TO_SWITCH_ON) {
+                            next_state_ready = false;
+                        }
+                    }
+                } 
+                else if (step <= 2000) {
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = CW_SWITCH_ON_CMD;
+                        rxpdo[slave].target_velocity = 0;
+                        // check all slaves in switched on state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_SWITCHED_ON) {
+                            next_state_ready = false;
+                        }
+                    }
+                } 
+                else if (step <= 2400) {
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = CW_ENABLE_OP_CMD;
+                        rxpdo[slave].target_velocity = 0;
+                        // check all slaves in operation enabled state
+                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
+                        if (status_word != SW_STATE_OPERATION_ENABLED) {
+                            next_state_ready = false;
+                        }
+                    }
+                } 
+                else {
+                    // all slaves enabled, set target velocities
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        rxpdo[slave].controlword = CW_ENABLE_OP_CMD;
+                        rxpdo[slave].target_velocity = TARGET_VELOCITY;   // counts per second
+                    }
                 }
 
-                // Send PDO data to the slaves
+                // configure mode of operation (CSV == 9)
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(ec_slave[slave].outputs, &rxpdo, sizeof(rxpdo_t));
+                    rxpdo[slave].mode_of_operation = mode_of_operation;
                 }
 
-                // Print status information every 100 cycles
+                // Copy RXPDO data from local array to SOEM for sending
+                for (int slave = 1; slave <= ec_slavecount; slave++) {
+                    memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
+                }
+
+                // print TXPDO data every 100 ticks
                 if (dorun % 100 == 0) {
-                    printf("Status: pos=%d, target=%d, vel=%d, torque=%d\n",
-                           txpdo.actual_position, rxpdo.target_position,
-                           txpdo.actual_velocity, txpdo.actual_torque);
+                    for (int slave = 1; slave <= ec_slavecount; slave++) {
+                        printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
+                           txpdo[slave].statusword,
+                           txpdo[slave].actual_position, txpdo[slave].actual_velocity,
+                           rxpdo[slave].target_velocity, rxpdo[slave].mode_of_operation);
+                    }
                 }
 
-                if (step < 1200) {
+                // only progress state machine if next state ready
+                // (next_state_ready == true) means all slaves are in same state
+                if (step < 8000 && next_state_ready) {
                     step++;
                 }
-            } else {
-                printf("WARNING: Working counter error (wkc: %d, expected: %d)\n", 
-                       wkc, expectedWKC);
+            } 
+            
+            /**
+             * Working counter did not match expected
+             * Less slaves than expected
+             * To-do: continue normal operation with warning that WKC did not match expected
+             */
+            else {
+                retry_count++;
+                if (retry_count >= MAX_RETRY) {
+                    printf("ERROR: Communication failure after %d retries\n", retry_count);
+                    retry_count = 0;
+                }
             }
 
-            // Clock synchronization
+            // clock synchronization
             if (ec_slave[0].hasdc) {
                 ec_sync(ec_DCtime, cycletime, &toff);
             }
 
-            // Send process data
+            // send process data
             ec_send_processdata();
         }
 
-        // Monitor cycle time
+        // monitor cycle time
         clock_gettime(CLOCK_MONOTONIC, &cycle_end);
         cycle_time_ns = (cycle_end.tv_sec - cycle_start.tv_sec) * NSEC_PER_SEC +
                        (cycle_end.tv_nsec - cycle_start.tv_nsec);
@@ -792,220 +862,39 @@ int test_count_sum = 100;
 int test_count = 0;
 float correct_rate = 0;
 
-// Helper function for clamping values
-template<typename T>
-T clamp(T value, T min_val, T max_val) {
-    if (value < min_val) return min_val;
-    if (value > max_val) return max_val;
-    return value;
-}
-
-// Smooth target position update with reduced computation
-int32_t update_smooth_target(MotionPlanner* planner) {
-    int32_t position_diff = planner->target_position - planner->smooth_target;
-    
-    // Simple linear interpolation
-    int32_t position_increment = position_diff * planner->SMOOTH_FACTOR;
-    
-    // Update smooth target position
-    planner->smooth_target += position_increment;
-    
-    return planner->smooth_target;
-}
-
-// Optimized trajectory planning with reduced computational load
-int32_t plan_trajectory(MotionPlanner* planner, int32_t actual_position) {
-    // Initialize on first start
-    if (!planner->is_moving) {
-        planner->start_position = actual_position;
-        planner->current_position = actual_position;
-        planner->smooth_target = actual_position;
-        planner->current_velocity = 0.0;
-        planner->is_moving = true;
-    }
-    
-    int32_t target = planner->target_position;
-    double pos_error = target - planner->current_position;
-    
-    // If very close to target, use simple proportional control
-    if (fabs(pos_error) < 1.0) {
-        planner->current_position = target;
-        planner->current_velocity = 0.0;
-        planner->is_moving = false;
-        return target;
-    }
-    
-    // --- Trajectory planning modification ---
-    // To make braking more gradual, use a distance-based speed calculation for deceleration control.
-    // The formula used is: v_max = sqrt(2 * BRAKE_DECEL * d)
-    // The smaller the BRAKE_DECEL, the lower the allowed speed, resulting in a slower braking effect.
-    const double BRAKE_DECEL = 5000.0;  // Deceleration rate for braking (adjustable), the smaller the value, the slower the braking
-    double allowed_speed = sqrt(2.0 * BRAKE_DECEL * fabs(pos_error));
-    
-    // Target velocity cannot exceed maximum velocity or allowed braking speed
-    double desired_vel = fmin(planner->MAX_VELOCITY, allowed_speed);
-    desired_vel = copysign(desired_vel, pos_error);  // Ensure direction is correct
-    
-    // Limit acceleration rate to prevent rapid velocity changes
-    double vel_error = desired_vel - planner->current_velocity;
-    double max_vel_change = planner->MAX_VELOCITY * planner->CYCLE_TIME;  // Maintain original acceleration limit
-    if (fabs(vel_error) > max_vel_change) {
-        planner->current_velocity += copysign(max_vel_change, vel_error);
-    } else {
-        planner->current_velocity = desired_vel;
-    }
-    
-    // Update position based on current velocity
-    planner->current_position += planner->current_velocity * planner->CYCLE_TIME;
-    // --- end modification ---
-    
-    // Debug info (reduced frequency)
-    if ((dorun % 1000) == 0) {
-        printf("Planned Trajectory: Pos: %.1f, Target: %d, Vel: %.1f\n",
-               planner->current_position, target, planner->current_velocity);
-    }
-    
-    return static_cast<int32_t>(planner->current_position);
-}
-
-// Add the server function before erob_test()
-void* start_server(void* arg) {
-    int port = *(int*)arg;
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-    int opt = 1;
-    int addrlen = sizeof(address);
-    char buffer[1024] = {0};
-
-    // Create socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        std::cerr << "Socket creation failed" << std::endl;
-        return nullptr;
-    }
-
-    // Set socket options
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        std::cerr << "Failed to set socket options" << std::endl;
-        return nullptr;
-    }
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(port);
-
-    // Bind socket
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        std::cerr << "Binding failed" << std::endl;
-        return nullptr;
-    }
-
-    // Listen for connections
-    if (listen(server_fd, 3) < 0) {
-        std::cerr << "Listening failed" << std::endl;
-        return nullptr;
-    }
-
-    std::cout << "Server started, waiting for connection on port " << port << "..." << std::endl;
-    
-    if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-        std::cerr << "Failed to accept connection" << std::endl;
-        return nullptr;
-    }
-    std::cout << "Client connected!" << std::endl;
-
-    // Receive data
-    while (true) {
-        int valread = read(new_socket, buffer, 1024);
-        if (valread > 0) {
-            try {
-                std::cout << "\nReceived raw data: " << buffer << std::endl;
-                int32_t new_target = std::stoi(buffer);
-                
-                pthread_mutex_lock(&target_mutex);
-                received_target = new_target;
-                target_updated = true;
-                std::cout << "Set new target position: " << new_target << std::endl;
-                std::cout << "Update flag set to: " << target_updated << std::endl;
-                pthread_mutex_unlock(&target_mutex);
-            } catch (const std::exception& e) {
-                std::cerr << "Data conversion error: " << e.what() << std::endl;
-            }
-            memset(buffer, 0, sizeof(buffer));
-        } else if (valread == 0) {
-            std::cout << "Client disconnected" << std::endl;
-            break;
-        } else {
-            std::cerr << "Read error: " << strerror(errno) << std::endl;
-        }
-    }
-
-    close(new_socket);
-    close(server_fd);
-    std::cout << "Server closed" << std::endl;
-    return nullptr;
-}
-
-// Function to update motor status information
-void update_motor_status(int slave_id) {
-    // Update status information from TXPDO
-    motor_status.status_word = txpdo.statusword;
-    motor_status.actual_position = txpdo.actual_position;
-    motor_status.actual_velocity = txpdo.actual_velocity;
-    motor_status.actual_torque = txpdo.actual_torque;
-    
-    // Check status word to determine if motor is operational
-    // Bits 0-3 should be 0111 for enabled and ready state
-    motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
-}
-
-// Modify the main function to start the server thread
+// Main function
 int main(int argc, char **argv) {
     needlf = FALSE;
     inOP = FALSE;
     start_ecatthread_thread = FALSE;
     dorun = 0;
-    ctime_thread = 1000; // 1ms cycle time
 
-    // Set a higher real-time priority
+    ctime_thread = 1000;  // Communication period
+
+    // Set the highest real-time priority
     struct sched_param param;
-    param.sched_priority = 99; // Maximum real-time priority
+    param.sched_priority = 99;
     if (sched_setscheduler(0, SCHED_FIFO, &param) == -1) {
         perror("sched_setscheduler failed");
     }
 
-    // Lock memory to prevent paging
+    // Lock memory
     if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1) {
         perror("mlockall failed");
     }
 
-    // Set CPU affinity
+    // Set CPU affinity to two cores
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(3, &cpuset);
+    CPU_SET(2, &cpuset);  // Use CPU core 2
+    CPU_SET(3, &cpuset);  // Use CPU core 3
 
     if (sched_setaffinity(0, sizeof(cpu_set_t), &cpuset) == -1) {
         perror("sched_setaffinity");
         return EXIT_FAILURE;
     }
 
-    // Start the server thread with lower priority
-    pthread_t server_thread;
-    pthread_attr_t attr;
-    struct sched_param server_param;
-    
-    pthread_attr_init(&attr);
-    pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
-    server_param.sched_priority = 0;
-    pthread_attr_setschedparam(&attr, &server_param);
-    
-    int port = 8080;
-    if (pthread_create(&server_thread, &attr, start_server, &port) != 0) {
-        std::cerr << "Failed to create server thread" << std::endl;
-        return EXIT_FAILURE;
-    }
-    
-    pthread_attr_destroy(&attr);
-
-    printf("Running on CPU core 3\n");
+    printf("Running on CPU cores 2 and 3\n");
     erob_test();
     printf("End program\n");
 
