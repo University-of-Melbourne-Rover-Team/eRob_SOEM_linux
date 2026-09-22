@@ -48,8 +48,8 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr); // Function to check the state of EtherCA
 OSAL_THREAD_FUNC_RT ecatthread(void *ptr); // Real-time EtherCAT thread function
 
 // Thread handles for the EtherCAT threads
-OSAL_THREAD_HANDLE thread1; // Handle for the EtherCAT check thread
-OSAL_THREAD_HANDLE thread2; // Handle for the real-time EtherCAT thread
+OSAL_THREAD_HANDLE ecat_check_thread; // Handle for the EtherCAT check thread
+OSAL_THREAD_HANDLE ecatrt_thread; // Handle for the real-time EtherCAT thread
 
 // Function to synchronize time with the EtherCAT distributed clock
 void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime);
@@ -60,8 +60,6 @@ void add_timespec(struct timespec *ts, int64 addtime);
 #define stack64k (64 * 1024) // Stack size for threads
 #define NSEC_PER_SEC 1000000000   // Number of nanoseconds in one second
 #define EC_TIMEOUTMON 5000        // Timeout for monitoring in microseconds
-#define MAX_VELOCITY 30000        // Maximum velocity
-#define MAX_ACCELERATION 50000    // Maximum acceleration
 
 // Conversion units for the servomotor
 float Cnt_to_deg = 0.000686645; // Conversion factor from counts to degrees
@@ -90,32 +88,6 @@ pthread_cond_t target_position_cond = PTHREAD_COND_INITIALIZER;
 bool target_updated = false;
 int32_t received_target = 0;
 
-/** 
- * MotorStatus and update_motor_status() not used
- * To do:
- *  - use this code
- * */
-
-// struct MotorStatus {
-//     bool is_operational;
-//     uint16_t status_word;
-//     int32_t actual_position;
-//     int32_t actual_velocity;
-//     int16_t actual_torque;
-// } motor_status;
-
-// // Function to update motor status information
-// void update_motor_status(int slave_id) {
-//     // Update status information from TXPDO
-//     motor_status.status_word = txpdo.statusword;
-//     motor_status.actual_position = txpdo.actual_position;
-//     motor_status.actual_velocity = txpdo.actual_velocity;
-//     motor_status.actual_torque = txpdo.actual_torque;
-    
-//     // Check status word to determine if motor is operational
-//     // Bits 0-3 should be 0111 for enabled and ready state
-//     motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
-// }
 
 //##################################################################################################
 // Function: Set the CPU affinity for a thread
@@ -250,7 +222,7 @@ int erob_test() {
     printf("___________________________________________\n");
 
     //........................................................................................
-    // Map TXPOD
+    // Map TXPDO
     retval = 0;
     uint16 map_1c13;
     for(int i = 1; i <= ec_slavecount; i++) {
@@ -422,10 +394,10 @@ int erob_test() {
 
     // Start the EtherCAT thread for real-time processing
     start_ecatthread_thread = TRUE; // Flag to indicate that the EtherCAT thread should start
-    osal_thread_create_rt(&thread1, stack64k * 2, (void *)&ecatthread, /*param=*/(void *)&ctime_thread); // Create the real-time EtherCAT thread
-    // set_thread_affinity(*thread1, 4); // Optional: Set CPU affinity for the thread
-    osal_thread_create(&thread2, stack64k * 2, (void *)&ecatcheck, NULL); // Create the EtherCAT check thread
-    // set_thread_affinity(*thread2, 5); // Optional: Set CPU affinity for the thread
+    osal_thread_create_rt(&ecatrt_thread, stack64k * 2, (void *)&ecatthread, /*param=*/(void *)&ctime_thread); // Create the real-time EtherCAT thread
+    // set_thread_affinity(*ecatrt_thread, 4); // Optional: Set CPU affinity for the thread
+    osal_thread_create(&ecat_check_thread, stack64k * 2, (void *)&ecatcheck, NULL); // Create the EtherCAT check thread
+    // set_thread_affinity(*ecat_check_thread, 5); // Optional: Set CPU affinity for the thread
     printf("wait one second before step 8 ... \n");
     osal_usleep(1000000);
     printf("___________________________________________\n");
@@ -473,33 +445,33 @@ int erob_test() {
         
         uint8 operation_mode = MODE_CSV;  // CSV mode
         uint16_t Control_Word = 0;
-        int32_t Max_Velocity = 30000;  // 最大速度限制
-        int32_t Max_Acceleration = 30000;  // 最大加速度限制
-        int32_t Quick_Stop_Decel = 30000;  // 快速停止减速度
-        int32_t Profile_Decel = 10000;  // 减速度
+        int32_t Max_Velocity = 30000;
+        int32_t Max_Acceleration = 30000;
+        int32_t Quick_Stop_Decel = 30000;
+        int32_t Profile_Decel = 10000;
         
         for (int i = 1; i <= ec_slavecount; i++) {
-            // 先禁用电机
+            // control word
             Control_Word = 0x0000;
-            ec_SDOwrite(i, 0x6040, 0x00, FALSE, sizeof(Control_Word), &Control_Word, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_CONTROL_WORD, 0x00, FALSE, sizeof(Control_Word), &Control_Word, EC_TIMEOUTSAFE);
             osal_usleep(100000);
 
-            // 设置操作模式为CSV
-            ec_SDOwrite(i, 0x6060, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
+            // Set operation mode to CSV
+            ec_SDOwrite(i, INDEX_OP_MODE, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
             osal_usleep(100000);
 
-            // 设置速度相关参数
-            ec_SDOwrite(i, 0x6080, 0x00, FALSE, sizeof(Max_Velocity), &Max_Velocity, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x60C5, 0x00, FALSE, sizeof(Max_Acceleration), &Max_Acceleration, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x6085, 0x00, FALSE, sizeof(Quick_Stop_Decel), &Quick_Stop_Decel, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x6084, 0x00, FALSE, sizeof(Profile_Decel), &Profile_Decel, EC_TIMEOUTSAFE);
+            // configure physical motor parameters
+            ec_SDOwrite(i, INDEX_MAX_VELOCITY, 0x00, FALSE, sizeof(Max_Velocity), &Max_Velocity, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_MAX_ACCELERATION, 0x00, FALSE, sizeof(Max_Acceleration), &Max_Acceleration, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_QUICK_STOP_DECEL, 0x00, FALSE, sizeof(Quick_Stop_Decel), &Quick_Stop_Decel, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_PROFILE_DECEL, 0x00, FALSE, sizeof(Profile_Decel), &Profile_Decel, EC_TIMEOUTSAFE);
             
             osal_usleep(100000);
             
-            // 验证模式是否设置成功
+            // receive motor actual mode of operation
             uint8 actual_mode;
             int size = sizeof(actual_mode);
-            if (ec_SDOread(i, 0x6061, 0x00, FALSE, &size, &actual_mode, EC_TIMEOUTSAFE) > 0) {
+            if (ec_SDOread(i, INDEX_OP_MODE_DISPLAY, 0x00, FALSE, &size, &actual_mode, EC_TIMEOUTSAFE) > 0) {
                 printf("Actual operation mode: %d\n", actual_mode);
             }
         }
@@ -651,14 +623,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr) {
  * the specified cycle time.
  */
 OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
-
-    // note: index starts from 1 not 0
-    rxpdo_t rxpdo[ec_slavecount + 1];  // array storing data sent to slaves
-    txpdo_t txpdo[ec_slavecount + 1];  // array storing data receivedfrom slaves
-
-    rxpdo[0] = {};    // 0th element not used
-    txpdo[0] = {};    // 0th element not used
-
+    // EtherCAT runtime variables
     int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
     int ht;
@@ -679,6 +644,14 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
 
     toff = 0;
     dorun = 0;
+
+    // RXPDO/TXPDO for cyclic process data exchange 
+    // note: index starts from 1 not 0
+    rxpdo_t rxpdo[ec_slavecount + 1];  // array storing data sent to slaves
+    txpdo_t txpdo[ec_slavecount + 1];  // array storing data receivedfrom slaves
+
+    rxpdo[0] = {};    // 0th element not used
+    txpdo[0] = {};    // 0th element not used
     
     // configure RXPDO data on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
@@ -693,7 +666,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
         memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
     }
     ec_send_processdata();
-    wkc = ec_receive_processdata(EC_TIMEOUTRET);  // 确保第一次通信成功
+    wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
     int step = 0;
     int retry_count = 0;

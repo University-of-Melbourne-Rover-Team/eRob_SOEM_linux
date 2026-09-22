@@ -42,3 +42,4 @@ uint16_t cia402_control_word(uint16_t status_word) {
 
     return control_word;
 }
+

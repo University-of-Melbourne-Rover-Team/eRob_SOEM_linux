@@ -4,6 +4,7 @@ This file is used to keep a progress log of URT EtherCAT maindevice.
 **20/09/26 Log**  
 Updates:
 - 6 motors working in CSV reliably since updating CiA 402 state machine control
+- 6 motors working in PV reliably
 
 Changes include:  
 - maindevice waits for all slaves to reach the same state before issuing new control word

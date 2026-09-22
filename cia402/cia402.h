@@ -1,7 +1,7 @@
 // CiA 402 Object dictionary constants shared by all control modes
 
-#ifndef _CIA402_H
-#define _CIA402_H
+#ifndef _CIA402_H_
+#define _CIA402_H_
 
 #include <stdint.h>
 
@@ -14,9 +14,12 @@
 #define INDEX_ACTUAL_POSITION       0x6064U
 #define INDEX_TARGET_VELOCITY       0x60FFU
 #define INDEX_ACTUAL_VELOCITY       0x606CU
+#define INDEX_MAX_VELOCITY          0x6080U
 #define INDEX_PROFILE_VELOCITY      0x6081U
 #define INDEX_PROFILE_ACCEL         0x6083U
 #define INDEX_PROFILE_DECEL         0x6084U
+#define INDEX_QUICK_STOP_DECEL      0x6085U
+#define INDEX_MAX_ACCELERATION      0x60C5U
 #define INDEX_ERROR_CODE            0x603FU
 
 // Mode of operation
