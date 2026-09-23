@@ -73,55 +73,12 @@ void add_timespec(struct timespec *ts, int64 addtime);
 float Cnt_to_deg = 0.000686645; // Conversion factor from counts to degrees
 int8_t SLAVE_ID; // Slave ID for EtherCAT communication
 
-// Structure for RXPDO (Control data sent to slave)
-typedef struct {
-    uint16_t controlword;      // 0x6040:0, 16 bits
-    int32_t target_velocity;   // 0x60FF:0, 32 bits
-    uint8_t mode_of_operation; // 0x6060:0, 8 bits
-    uint8_t padding;           // 8 bits padding for alignment
-} __attribute__((__packed__)) rxpdo_t;
-
-// Structure for TXPDO (Status data received from slave)
-typedef struct {
-    uint16_t statusword;      // 0x6041:0, 16 bits
-    int32_t actual_position;  // 0x6064:0, 32 bits
-    int32_t actual_velocity;  // 0x606C:0, 32 bits
-    int16_t actual_torque;    // 0x6077:0, 16 bits
-} __attribute__((__packed__)) txpdo_t;
-
 // Global variables
 volatile int target_position = 0;
 pthread_mutex_t target_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t target_position_cond = PTHREAD_COND_INITIALIZER;
 bool target_updated = false;
 int32_t received_target = 0;
-
-/** 
- * MotorStatus and update_motor_status() not used
- * To do:
- *  - use this code
- * */
-
-// struct MotorStatus {
-//     bool is_operational;
-//     uint16_t status_word;
-//     int32_t actual_position;
-//     int32_t actual_velocity;
-//     int16_t actual_torque;
-// } motor_status;
-
-// // Function to update motor status information
-// void update_motor_status(int slave_id) {
-//     // Update status information from TXPDO
-//     motor_status.status_word = txpdo.statusword;
-//     motor_status.actual_position = txpdo.actual_position;
-//     motor_status.actual_velocity = txpdo.actual_velocity;
-//     motor_status.actual_torque = txpdo.actual_torque;
-    
-//     // Check status word to determine if motor is operational
-//     // Bits 0-3 should be 0111 for enabled and ready state
-//     motor_status.is_operational = (txpdo.statusword & 0x0F) == 0x07;
-// }
 
 //##################################################################################################
 // Function: Set the CPU affinity for a thread
@@ -482,19 +439,19 @@ int erob_test() {
         for (int i = 1; i <= ec_slavecount; i++) {
             // 先禁用电机
             Control_Word = 0x0000;
-            ec_SDOwrite(i, 0x6040, 0x00, FALSE, sizeof(Control_Word), &Control_Word, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_CONTROL_WORD, 0x00, FALSE, sizeof(Control_Word), &Control_Word, EC_TIMEOUTSAFE);
             osal_usleep(100000);
 
             // 设置操作模式为CSV
-            ec_SDOwrite(i, 0x6060, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_OP_MODE, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
             osal_usleep(100000);
 
             // 设置速度相关参数
-            ec_SDOwrite(i, 0x6080, 0x00, FALSE, sizeof(Max_Velocity), &Max_Velocity, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x60C5, 0x00, FALSE, sizeof(Max_Acceleration), &Max_Acceleration, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x6085, 0x00, FALSE, sizeof(Quick_Stop_Decel), &Quick_Stop_Decel, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x6083, 0x00, FALSE, sizeof(Profile_Accel), &Profile_Accel, EC_TIMEOUTSAFE);
-            ec_SDOwrite(i, 0x6084, 0x00, FALSE, sizeof(Profile_Decel), &Profile_Decel, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_MAX_VELOCITY, 0x00, FALSE, sizeof(Max_Velocity), &Max_Velocity, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_MAX_ACCELERATION, 0x00, FALSE, sizeof(Max_Acceleration), &Max_Acceleration, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_QUICK_STOP_DECEL, 0x00, FALSE, sizeof(Quick_Stop_Decel), &Quick_Stop_Decel, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_PROFILE_ACCEL, 0x00, FALSE, sizeof(Profile_Accel), &Profile_Accel, EC_TIMEOUTSAFE);
+            ec_SDOwrite(i, INDEX_PROFILE_DECEL, 0x00, FALSE, sizeof(Profile_Decel), &Profile_Decel, EC_TIMEOUTSAFE);
             
             osal_usleep(100000);
             
@@ -653,16 +610,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr) {
  * the specified cycle time.
  */
 OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
-
-    // note: index starts from 1 not 0
-    rxpdo_t rxpdo[ec_slavecount + 1];  // array storing data sent to slaves
-    txpdo_t txpdo[ec_slavecount + 1];  // array storing data receivedfrom slaves
-
-    rxpdo[0] = {};    // 0th element not used
-    txpdo[0] = {};    // 0th element not used
-
-    const int mode_of_operation = MODE_PROFILE_VELOCITY;
-
+    // EtherCAT runtime variables
     int *ctime = (int *)ptr; // Cycle time for the EtherCAT thread
     struct timespec ts, tleft;
     int ht;
@@ -683,21 +631,27 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
 
     toff = 0;
     dorun = 0;
-    
-    // configure RXPDO data on startup
+
+    cia402_motor_t motors[ec_slavecount + 1];
+    motors[0] = {}; // 0th element not used
+
+    // configure motors on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
-        rxpdo[slave].target_velocity = 0; 
-        rxpdo[slave].mode_of_operation = mode_of_operation;
-        rxpdo[slave].padding = 0;
+        motors[slave].rxpdo.controlword = CW_FAULT_RESET_CMD;
+        motors[slave].rxpdo.target_velocity = 0;
+        motors[slave].rxpdo.mode_of_operation = MODE_CSV;
+        motors[slave].rxpdo.padding = 0;
+        motors[slave].state = NOT_READY_TO_SWITCH_ON;
+        motors[slave].faulted = false;
+        motors[slave].step = 0;
     }
     
-    // send RXPDO data to slaves
+    // send RXPDO data
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
+        memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
     }
     ec_send_processdata();
-    wkc = ec_receive_processdata(EC_TIMEOUTRET);  // 确保第一次通信成功
+    wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
     int step = 0;
     int retry_count = 0;
@@ -735,9 +689,11 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             if (wkc >= expectedWKC) {
                 retry_count = 0;  // Reset retry counter
                 
-                // store TXPDO data received from slave into local array
+                // store TXPDO data received from slave into motors
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(&(txpdo[slave]), ec_slave[slave].inputs, sizeof(txpdo_t));
+                    memcpy(&(motors[slave].txpdo), ec_slave[slave].inputs, sizeof(txpdo_t));
+                    // update the motor state
+                    motors[slave].state = cia402_decode_state(motors[slave].txpdo.statusword);
                 }
 
                 // CiA 402 State machine control
@@ -745,73 +701,66 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
 
                 if (step <= 1500) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;  // TO DO: fault reset is rising edge triggered
-                        rxpdo[slave].target_velocity = 0;
+                        motors[slave].rxpdo.controlword = CW_FAULT_RESET_CMD;
+                        motors[slave].rxpdo.target_velocity = 0;
                         // check all slaves in switch on disabled state
-                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
-                        if (status_word != SW_STATE_SWITCH_ON_DISABLED) {
+                        if (motors[slave].state != SW_ON_DISABLED) {
                             next_state_ready = false;
                         }
                     }
                 }
                 else if (step <= 1800) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = CW_SHUTDOWN_CMD;
-                        rxpdo[slave].target_velocity = 0;
-                        // check all slaves in ready to switch on state
-                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
-                        if (status_word != SW_STATE_READY_TO_SWITCH_ON) {
+                        motors[slave].rxpdo.controlword = CW_SHUTDOWN_CMD;
+                        motors[slave].rxpdo.target_velocity = 0;
+                        // check all slaves in switch on disabled state
+                        if (motors[slave].state != READY_TO_SWITCH_ON) {
                             next_state_ready = false;
                         }
                     }
                 } 
                 else if (step <= 2000) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = CW_SWITCH_ON_CMD;
-                        rxpdo[slave].target_velocity = 0;
-                        // check all slaves in switched on state
-                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
-                        if (status_word != SW_STATE_SWITCHED_ON) {
+                        motors[slave].rxpdo.controlword = CW_SWITCH_ON_CMD;
+                        motors[slave].rxpdo.target_velocity = 0;
+                        // check all slaves in switch on disabled state
+                        if (motors[slave].state != SWITCHED_ON) {
                             next_state_ready = false;
                         }
                     }
                 } 
                 else if (step <= 2400) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = CW_ENABLE_OP_CMD;
-                        rxpdo[slave].target_velocity = 0;
-                        // check all slaves in operation enabled state
-                        uint16_t status_word = cia402_decode_state(txpdo[slave].statusword);
-                        if (status_word != SW_STATE_OPERATION_ENABLED) {
+                        motors[slave].rxpdo.controlword = CW_ENABLE_OP_CMD;
+                        motors[slave].rxpdo.target_velocity = 0;
+                        // check all slaves in switch on disabled state
+                        if (motors[slave].state != OPERATION_ENABLED) {
                             next_state_ready = false;
                         }
                     }
-                } 
+                }
                 else {
                     // all slaves enabled, set target velocities
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        rxpdo[slave].controlword = CW_ENABLE_OP_CMD;
-                        rxpdo[slave].target_velocity = TARGET_VELOCITY;   // counts per second
+                        motors[slave].rxpdo.controlword = CW_ENABLE_OP_CMD;
+                        motors[slave].rxpdo.target_velocity = -20000; // counts per second
                     }
-                }
-
-                // configure mode of operation (CSV == 9)
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    rxpdo[slave].mode_of_operation = mode_of_operation;
                 }
 
                 // Copy RXPDO data from local array to SOEM for sending
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(ec_slave[slave].outputs, &(rxpdo[slave]), sizeof(rxpdo_t));
+                    memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
                 }
 
                 // print TXPDO data every 100 ticks
                 if (dorun % 100 == 0) {
                     for (int slave = 1; slave <= ec_slavecount; slave++) {
                         printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
-                           txpdo[slave].statusword,
-                           txpdo[slave].actual_position, txpdo[slave].actual_velocity,
-                           rxpdo[slave].target_velocity, rxpdo[slave].mode_of_operation);
+                           motors[slave].txpdo.statusword,
+                           motors[slave].txpdo.actual_position,
+                           motors[slave].txpdo.actual_velocity,
+                           motors[slave].rxpdo.target_velocity, 
+                           motors[slave].rxpdo.mode_of_operation);
                     }
                 }
 
@@ -826,6 +775,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
              * Working counter did not match expected
              * Less slaves than expected
              * To-do: continue normal operation with warning that WKC did not match expected
+             * and setting all the disconnected motors to fault state
              */
             else {
                 retry_count++;

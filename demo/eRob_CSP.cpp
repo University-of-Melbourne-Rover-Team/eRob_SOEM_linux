@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "ethercat.h"
-#include "cia402.h"
+// #include "cia402.h"
 #include <iostream>
 #include <inttypes.h>
 #include <time.h>
