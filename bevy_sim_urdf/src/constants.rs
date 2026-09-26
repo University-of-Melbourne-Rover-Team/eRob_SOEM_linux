@@ -4,8 +4,8 @@ use bevy::prelude::KeyCode;
 
 pub(crate) const DEFAULT_TRIANGLE_CAP: usize = 25_000;
 pub(crate) const JOINT_SPEED: f32 = 1.2;
-pub(crate) const TARGET_MOVE_SPEED: f32 = 0.25;
-pub(crate) const TARGET_ROTATE_SPEED: f32 = 1.2;
+pub(crate) const TARGET_MOVE_SPEED: f32 = 0.08;
+pub(crate) const TARGET_ROTATE_SPEED: f32 = 0.5;
 pub(crate) const TASK_TARGET_LINK: &str = "link6";
 pub(crate) const DEFAULT_HOME_JOINTS: [f64; 6] = [-0.6, 2.5, 1.5, -1.2, -1.4, 2.0];
 pub(crate) const DEFAULT_LIMIT: f32 = std::f32::consts::PI;
