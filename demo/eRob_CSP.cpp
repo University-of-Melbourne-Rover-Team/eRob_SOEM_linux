@@ -92,28 +92,12 @@ void add_timespec(struct timespec *ts, int64 addtime);
 #define stack64k (64 * 1024) // Stack size for threads
 #define NSEC_PER_SEC 1000000000   // Number of nanoseconds in one second
 #define EC_TIMEOUTMON 5000        // Timeout for monitoring in microseconds
-#define MAX_VELOCITY 30000        // Reduced maximum velocity (from 200000 to 30000)
-#define MAX_ACCELERATION 50000    // Reduced maximum acceleration (from 500000 to 50000)
+#define MAX_VELOCITY 300000        // Reduced maximum velocity (from 200000 to 30000)
+#define MAX_ACCELERATION 100000    // Reduced maximum acceleration (from 500000 to 50000)
 
 // Conversion units for the servomotor
 float Cnt_to_deg = 0.000686645; // Conversion factor from counts to degrees
 int8_t SLAVE_ID; // Slave ID for EtherCAT communication
-
-// Structure for RXPDO (Control data sent to slave)
-typedef struct {
-    uint16_t controlword;      // 0x6040:0, 16 bits
-    int32_t target_position;   // 0x607A:0, 32 bits
-    uint8_t mode_of_operation; // 0x6060:0, 8 bits
-    uint8_t padding;           // 8 bits padding for alignment
-} __attribute__((__packed__)) rxpdo_t;
-
-// Structure for TXPDO (Status data received from slave)
-typedef struct {
-    uint16_t statusword;      // 0x6041:0, 16 bits
-    int32_t actual_position;  // 0x6064:0, 32 bits
-    int32_t actual_velocity;  // 0x606C:0, 32 bits
-    int16_t actual_torque;    // 0x6077:0, 16 bits
-} __attribute__((__packed__)) txpdo_t;
 
 // The cyclic thread never waits for status readers or terminal output.
 struct CycleStatus {
@@ -698,30 +682,28 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
 
     toff = 0;
     dorun = 0;
-    
+
+    cia402_motor_t motors[EC_MAXSLAVE]{}; // Slave indices start at 1.
+
     // Initialize PDO data
-    rxpdo_t rxpdo[EC_MAXSLAVE]{};
-    txpdo_t txpdo[EC_MAXSLAVE]{};
     MotionPlanner motion_planners[EC_MAXSLAVE];
     bool hold_position_latched[EC_MAXSLAVE]{};
     CommandInput command_input;
     CspFeedback feedback{};
     memcpy(feedback.magic, "CSF1", sizeof(feedback.magic));
-    // configure RXPDO data on startup
+
+    // configure motors on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        rxpdo[slave].controlword = CW_FAULT_RESET_CMD;
-        rxpdo[slave].target_position = 0; 
-        rxpdo[slave].mode_of_operation = MODE_CSP;
-        rxpdo[slave].padding = 0;
+        cia402_init_motor(&motors[slave], MODE_CSP);
     }
     
-    // Send initial process data
+    // send RXPDO data
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        memcpy(ec_slave[slave].outputs, &rxpdo[slave], sizeof(rxpdo_t));
+        memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(motors[slave].rxpdo));
     }
     ec_send_processdata();
+    wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
-    int step = 0;
     unsigned cycle_overruns = 0;
     unsigned sleep_errors = 0;
 
@@ -730,7 +712,6 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
         
         add_timespec(&ts, cycletime + toff);
         if (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, &tleft) != 0) {
-            // If sleep is interrupted, record the error
             missed_cycles++;
             ++sleep_errors;
             if (missed_cycles >= MAX_MISSED_CYCLES) {
@@ -759,80 +740,53 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             poll_commands(command_socket_fd, command_input);
 
             if (wkc >= expectedWKC) {
-                // Keep each slave's feedback separate.
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(&txpdo[slave], ec_slave[slave].inputs, sizeof(txpdo_t));
-                }
+                bool motion_ready = ec_slave[0].state == EC_STATE_OPERATIONAL;
 
-                // Preserve CSP's existing stage thresholds. Like CSV, each
-                // stage waits for every slave to report its expected state.
-                uint16_t controlword;
-                uint16_t expected_state;
-                if (step <= 400) {
-                    controlword = CW_FAULT_RESET_CMD;
-                    expected_state = SW_STATE_SWITCH_ON_DISABLED;
-                } else if (step <= 600) {
-                    controlword = CW_SHUTDOWN_CMD;
-                    expected_state = SW_STATE_READY_TO_SWITCH_ON;
-                } else if (step <= 800) {
-                    controlword = CW_SWITCH_ON_CMD;
-                    expected_state = SW_STATE_SWITCHED_ON;
-                } else {
-                    controlword = CW_ENABLE_OP_CMD;
-                    expected_state = SW_STATE_OPERATION_ENABLED;
-                }
-
-                bool next_state_ready = true;
+                // copy TXPDO data into local array and update state machine
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    if (cia402_decode_state(txpdo[slave].statusword) != expected_state)
-                        next_state_ready = false;
+                    memcpy(&(motors[slave].txpdo), ec_slave[slave].inputs, sizeof(motors[slave].txpdo));
+                    cia402_state_machine(&motors[slave]);
+                    motion_ready = motion_ready && motors[slave].operation_enabled;
                 }
 
                 // Array entry zero is slave 1; all six destinations change together.
                 const bool command_available = command_input.available;
-                const bool motion_ready = step > 1000 && next_state_ready;
                 feedback.cycle = static_cast<uint32_t>(dorun);
-                feedback.flags = motion_ready && ec_slave[0].state == EC_STATE_OPERATIONAL
-                    ? CSP_FEEDBACK_READY : 0;
+                feedback.flags = motion_ready ? CSP_FEEDBACK_READY : 0;
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    feedback.positions[slave - 1] = txpdo[slave].actual_position;
-                    feedback.statuswords[slave - 1] = txpdo[slave].statusword;
-                    rxpdo[slave].controlword = controlword;
-                    rxpdo[slave].mode_of_operation = MODE_CSP;
+                    feedback.positions[slave - 1] = motors[slave].txpdo.actual_position;
+                    feedback.statuswords[slave - 1] = motors[slave].txpdo.statusword;
 
-                    const uint16_t drive_state = cia402_decode_state(txpdo[slave].statusword);
-                    const bool enabling_or_enabled = controlword == CW_ENABLE_OP_CMD &&
-                        (drive_state == SW_STATE_SWITCHED_ON ||
-                         drive_state == SW_STATE_OPERATION_ENABLED);
+                    const bool enabling_or_enabled =
+                        motors[slave].rxpdo.controlword == CW_ENABLE_OP_CMD &&
+                        (motors[slave].state == SWITCHED_ON ||
+                         motors[slave].state == OPERATION_ENABLED);
                     if (!enabling_or_enabled) {
                         // Align with feedback while disabled/faulted. Re-latch
                         // before enabling so an old target is not applied on recovery.
-                        rxpdo[slave].target_position = txpdo[slave].actual_position;
+                        motors[slave].rxpdo.target_position = motors[slave].txpdo.actual_position;
                         hold_position_latched[slave] = false;
                     } else if (!hold_position_latched[slave]) {
                         // Capture once, before sending Enable Operation. Copying
                         // actual_position every cycle would let the target drift.
-                        rxpdo[slave].target_position = txpdo[slave].actual_position;
+                        motors[slave].rxpdo.target_position = motors[slave].txpdo.actual_position;
                         hold_position_latched[slave] = true;
                     }
 
                     if (motion_ready && command_available) {
                         motion_planners[slave].target_position =
                             command_input.latest.positions[slave - 1];
-                        rxpdo[slave].target_position = plan_trajectory(
-                            &motion_planners[slave], txpdo[slave].actual_position,
+                        motors[slave].rxpdo.target_position = plan_trajectory(
+                            &motion_planners[slave], motors[slave].txpdo.actual_position,
                             static_cast<double>(cycletime) / NSEC_PER_SEC);
                     } else {
                         // Keep the latched position (or last commanded setpoint)
                         // while enabled, including when another slave is not ready.
                         motion_planners[slave].initialized = false;
                     }
-                    memcpy(ec_slave[slave].outputs, &rxpdo[slave], sizeof(rxpdo_t));
+                    memcpy(ec_slave[slave].outputs, &motors[slave].rxpdo, sizeof(motors[slave].rxpdo));
                 }
 
-                if (step < 1200 && next_state_ready) {
-                    step++;
-                }
             }
 
             // Clock synchronization
@@ -842,8 +796,9 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
 
             // EtherCAT transmission takes priority over optional viewer feedback.
             ec_send_processdata();
-            if (wkc >= expectedWKC && dorun % 10 == 0)
+            if (wkc >= expectedWKC && dorun % 10 == 0){
                 publish_feedback(command_socket_fd, command_input, feedback);
+            }
         }
 
         // Monitor cycle time
@@ -851,21 +806,21 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
         cycle_time_ns = (cycle_end.tv_sec - cycle_start.tv_sec) * NSEC_PER_SEC +
                        (cycle_end.tv_nsec - cycle_start.tv_nsec);
         
-        if (cycle_time_ns > cycletime * 1.5)
+        if (cycle_time_ns > cycletime * 1.5){
             ++cycle_overruns;
-
+        }
         // Skip publication if the main thread is copying the previous sample.
         if (pthread_mutex_trylock(&status_mutex) == 0) {
             for (int slave = 1; slave <= ec_slavecount; slave++) {
                 CycleStatus &status = cycle_status[slave];
-                status.statusword = txpdo[slave].statusword;
-                status.actual_position = txpdo[slave].actual_position;
-                status.target_position = rxpdo[slave].target_position;
+                status.statusword = motors[slave].txpdo.statusword;
+                status.actual_position = motors[slave].txpdo.actual_position;
+                status.target_position = motors[slave].rxpdo.target_position;
                 status.destination_position = command_input.available
-                    ? command_input.latest.positions[slave - 1] : rxpdo[slave].target_position;
+                    ? command_input.latest.positions[slave - 1] : motors[slave].rxpdo.target_position;
                 status.cycle_number = dorun;
-                status.actual_velocity = txpdo[slave].actual_velocity;
-                status.actual_torque = txpdo[slave].actual_torque;
+                status.actual_velocity = motors[slave].txpdo.actual_velocity;
+                status.actual_torque = motors[slave].txpdo.actual_torque;
                 status.workcounter = wkc;
                 status.cycle_ns = cycle_time_ns;
                 status.overruns = cycle_overruns;
@@ -878,6 +833,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
         }
     }
 }
+
 
 int correct_count = 0;
 int incorrect_count = 0;

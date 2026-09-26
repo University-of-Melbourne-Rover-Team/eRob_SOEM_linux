@@ -1,7 +1,7 @@
 // CiA 402 Object dictionary constants shared by all control modes
 
-#ifndef _CIA402_H
-#define _CIA402_H
+#ifndef _CIA402_H_
+#define _CIA402_H_
 
 #include <stdint.h>
 
@@ -14,9 +14,12 @@
 #define INDEX_ACTUAL_POSITION       0x6064U
 #define INDEX_TARGET_VELOCITY       0x60FFU
 #define INDEX_ACTUAL_VELOCITY       0x606CU
+#define INDEX_MAX_VELOCITY          0x6080U
 #define INDEX_PROFILE_VELOCITY      0x6081U
 #define INDEX_PROFILE_ACCEL         0x6083U
 #define INDEX_PROFILE_DECEL         0x6084U
+#define INDEX_QUICK_STOP_DECEL      0x6085U
+#define INDEX_MAX_ACCELERATION      0x60C5U
 #define INDEX_ERROR_CODE            0x603FU
 
 // Mode of operation
@@ -68,19 +71,75 @@
 #define SW_STATE_FAULT_REACTION_ACTIVE     0x000FU
 #define SW_STATE_FAULT                     0x0008U
 
+typedef enum {
+    NOT_READY_TO_SWITCH_ON = SW_STATE_NOT_READY_TO_SWITCH_ON,
+    SW_ON_DISABLED = SW_STATE_SWITCH_ON_DISABLED,
+    READY_TO_SWITCH_ON = SW_STATE_READY_TO_SWITCH_ON,
+    SWITCHED_ON = SW_STATE_SWITCHED_ON,
+    OPERATION_ENABLED = SW_STATE_OPERATION_ENABLED,
+    QUICK_STOP_ACTIVE = SW_STATE_QUICK_STOP_ACTIVE,
+    FAULT_REACTION_ACTIVE = SW_STATE_FAULT_REACTION_ACTIVE,
+    FAULT = SW_STATE_FAULT,
+    UNKNOWN = 0xFFFFU
+} CIA402_STATE;
+
+// Structure for RXPDO (Control data sent to slave)
+typedef struct {
+    uint16_t controlword;      // 0x6040:0, 16 bits
+    // Both modes map one 32-bit target at the same PDO offset.
+    union {
+        int32_t target_velocity; // CSV/PV: 0x60FF:0
+        int32_t target_position; // CSP: 0x607A:0
+    };
+    uint8_t mode_of_operation; // 0x6060:0, 8 bits
+    uint8_t padding;           // 8 bits padding for alignment
+} __attribute__((__packed__)) cia402_rxpdo_t;
+
+// Structure for TXPDO (Status data received from slave)
+typedef struct {
+    uint16_t statusword;      // 0x6041:0, 16 bits
+    int32_t actual_position;  // 0x6064:0, 32 bits
+    int32_t actual_velocity;  // 0x606C:0, 32 bits
+    int16_t actual_torque;    // 0x6077:0, 16 bits
+} __attribute__((__packed__)) cia402_txpdo_t;
+
+typedef struct {
+    CIA402_STATE state;
+    cia402_rxpdo_t rxpdo;
+    cia402_txpdo_t txpdo;
+    uint32_t step;
+    bool faulted;
+    bool operation_enabled;
+} cia402_motor_t;
+
 /**
- * Decodes status word received from slave
+ * Decodes status word received from motor
  * @param {uint16_t} status_word: raw status word
- * @return {uint16_t}: decoded status word
+ * @return {enum CIA402_STATE}: CiA 402 state enum
  */
-uint16_t cia402_decode_state(uint16_t status_word);
+CIA402_STATE cia402_decode_state(uint16_t status_word);
 
 
 /**
  * Returns control word according to status word
- * @param {uint16_t} status_word: status word received from slave
- * @return {uint16_t} control word to transition to next state
+ * @param {enum CIA402_STATE} state: current state of slave
+ * @return {uint16_t}: control word to transition to next state
  */
-uint16_t cia402_control_word(uint16_t status_word);
+uint16_t cia402_control_word(CIA402_STATE state);
+
+/**
+ * Initialises cia402_motor_t motor's RXPDO and state variables
+ * @param {cia402_motor_t *}: motor, {const int}: mode_of_operation
+ * @return {void}
+ */
+void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation);
+
+/**
+ * CiA 402 state machine control
+ * Sets `faulted` and `operation_enabled` state variables
+ * @param {cia402_motor_t *}: motor
+ * @return {void}
+ */
+void cia402_state_machine(cia402_motor_t *motor);
 
 #endif
