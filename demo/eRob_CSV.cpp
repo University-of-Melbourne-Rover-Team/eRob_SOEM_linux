@@ -676,54 +676,80 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
              * Detected the expected number of slaves
              */
             if (wkc >= expectedWKC) {
-                retry_count = 0;  // Reset retry counter
-                
-                // copy TXPDO data into local array and update state machine
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(&(motors[slave].txpdo), ec_slave[slave].inputs, sizeof(txpdo_t));
-                    cia402_state_machine(&motors[slave]);
-                }
-
-                // set target velocity if in operation enabled state
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    if (motors[slave].operation_enabled) {
-                        motors[slave].rxpdo.target_velocity = 20000;
-                    }
-                    else {
-                        motors[slave].rxpdo.target_velocity = 0;
-                    }
-                }
-
-                // Copy RXPDO data from local array to SOEM for sending
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
-                }
-
-                // print TXPDO data every 100 ticks
-                if (dorun % 100 == 0) {
-                    for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
-                           motors[slave].txpdo.statusword,
-                           motors[slave].txpdo.actual_position,
-                           motors[slave].txpdo.actual_velocity,
-                           motors[slave].rxpdo.target_velocity, 
-                           motors[slave].rxpdo.mode_of_operation);
-                    }
-                }
-            } 
-            
-            /**
-             * Working counter did not match expected
-             * Less slaves than expected
-             * To-do: continue normal operation with warning that WKC did not match expected
-             * and setting all the disconnected motors to fault state
-             */
-            else {
+                retry_count = 0;
+            } else {
                 retry_count++;
                 if (retry_count >= MAX_RETRY) {
                     printf("ERROR: Communication failure after %d retries\n", retry_count);
                     retry_count = 0;
                 }
+            }
+
+            /**
+             * Check the connection status of each slave on the bus
+             */
+            for (int slave = 1; slave <= ec_slavecount; slave++) {
+                bool slave_connected = (ec_slave[slave].state == EC_STATE_OPERATIONAL) &&
+                                      !ec_slave[slave].islost;
+ 
+                // if motor just disconnected (falling edge)
+                if (motors[slave].ec_connected && !slave_connected) {
+                    printf("ERROR: Communication failure between slave %d and slave %d "
+                           "(slave %d state=0x%02x, wkc=%d, expectedWKC=%d)\n",
+                           slave - 1, slave, slave, ec_slave[slave].state, wkc, expectedWKC);
+                    cia402_lost_motor(&motors[slave], slave_connected);
+                } 
+                // else if motor just reconnected (rising edge)
+                else if (!motors[slave].ec_connected && slave_connected) {
+                    printf("MESSAGE: Slave %d communication restored, re-enabling\n", slave);
+                    cia402_init_motor(&motors[slave], MODE_CSV);
+                }
+ 
+                motors[slave].ec_connected = slave_connected;
+            }
+
+            /**
+             * Update process data
+             */
+            for (int slave = 1; slave <= ec_slavecount; slave++) {
+                // skip disconnected slaves
+                if (!motors[slave].ec_connected) {
+                    continue;
+                }
+
+                // copy TXPDO data into local array and update state machine
+                memcpy(&(motors[slave].txpdo), ec_slave[slave].inputs, sizeof(txpdo_t));
+                bool motor_faulted = motors[slave].faulted;
+                cia402_state_machine(&motors[slave]);
+
+                // motor just faulted
+                if (!motor_faulted && motors[slave].faulted) {
+                    printf("FAULT: Slave %d, SW=0x%04x\n", slave, motors[slave].txpdo.statusword);
+                }
+
+                // set target velocity if in operation enabled state
+                if (motors[slave].operation_enabled) {
+                        motors[slave].rxpdo.target_velocity = 20000;
+                }
+                else {
+                    motors[slave].rxpdo.target_velocity = 0;
+                }
+
+                // copy RXPDO data from local array to SOEM array for sending
+                memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
+            }
+
+            // print TXPDO data every 100 ticks
+            if (dorun % 100 == 0) {
+                for (int slave = 1; slave <= ec_slavecount; slave++) {
+                    printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
+                        motors[slave].txpdo.statusword,
+                        motors[slave].txpdo.actual_position,
+                        motors[slave].txpdo.actual_velocity,
+                        motors[slave].rxpdo.target_velocity, 
+                        motors[slave].rxpdo.mode_of_operation);
+                }
+                printf("\n");
             }
 
             // clock synchronization

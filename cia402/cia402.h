@@ -103,9 +103,10 @@ typedef struct {
     CIA402_STATE state;
     rxpdo_t rxpdo;
     txpdo_t txpdo;
-    uint32_t step;
-    bool faulted;
-    bool operation_enabled;
+    uint32_t step;  // state machine control variable
+    bool faulted;   // true if in fault state
+    bool operation_enabled; // true if in operation enable state
+    bool ec_connected; // true if ethercat comms are working
 } cia402_motor_t;
 
 /**
@@ -129,6 +130,13 @@ uint16_t cia402_control_word(CIA402_STATE state);
  * @return {void}
  */
 void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation);
+
+/**
+ * Reset cia402 motor's RXPDO and state variables when comms are lost
+ * @param {cia402_motor_t *}: motor, {const bool}: ec_connected, ethercat connected
+ * @return {void}
+ */
+void cia402_lost_motor(cia402_motor_t *motor, const bool ec_connected);
 
 /**
  * CiA 402 state machine control  
