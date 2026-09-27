@@ -90,12 +90,17 @@ void set_thread_affinity(pthread_t thread, int cpu_core) {
 }
 
 //##################################################################################################
-// Function prototype for the EtherCAT test function
-int erob_test();
+
+/**
+ * Function prototype for the EtherCAT test function
+ * @param {char *}: if_name, ethernet interface string (run ip link)
+ * @return {int}: program status code
+ */
+int erob_test(const char *if_name);
 
 uint16_t data_R;
 
-int erob_test() {
+int erob_test(const char *if_name) {
     // Have to wait 8 seconds after power before sending commands (p.g. 46).
 
     int rdl; // Variable to hold read data length
@@ -105,7 +110,7 @@ int erob_test() {
     // 1. Call ec_config_init() to move from INIT to PRE-OP state.
     printf("__________STEP 1___________________\n");
     // Initialize EtherCAT master on the specified network interface
-    if (ec_init("enp89s0") <= 0) {
+    if (ec_init(if_name) <= 0) {
         printf("Error: Could not initialize EtherCAT master!\n");
         printf("No socket connection on Ethernet port. Execute as root.\n");
         printf("___________________________________________\n");
@@ -784,9 +789,10 @@ int main(int argc, char **argv) {
         perror("sched_setaffinity");
         return EXIT_FAILURE;
     }
-
     printf("Running on CPU cores 2 and 3\n");
-    erob_test();
+
+    const char *if_name = "enp89s0";
+    erob_test(if_name);
     printf("End program\n");
 
     return EXIT_SUCCESS;
