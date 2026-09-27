@@ -20,3 +20,12 @@ To do:
 - Fix state machine control so that the control word is issued per drive based on its status word, instead of when all motors reach same state
 - Handle faults - at the moment when a fault occurs, there is no code to bring the motor back to operation enable state
 - tune max accel/decel/velocity parameters to acceptable values
+
+**23/09/26 Log**  
+Updates:  
+- 6 motors working reliably with CiA 402 state machine refactor
+- Per drive fault handling working: when one motor goes into fault, the others continue to run, and the faulted motor recovers once the fault is cleared.
+
+To do:  
+- Handle ethercat communication error (i.e. when a motor loses power or comms link)
+- Assign different PDO mappings based on motor position to allow different motors to have different control modes
