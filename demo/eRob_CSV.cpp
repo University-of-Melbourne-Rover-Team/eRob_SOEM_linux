@@ -742,12 +742,14 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             // print TXPDO data every 100 ticks
             if (dorun % 100 == 0) {
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
+                    printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d, op_en=%d, ec_connected=%d\n", slave,
                         motors[slave].txpdo.statusword,
                         motors[slave].txpdo.actual_position,
                         motors[slave].txpdo.actual_velocity,
                         motors[slave].rxpdo.target_velocity, 
-                        motors[slave].rxpdo.mode_of_operation);
+                        motors[slave].rxpdo.mode_of_operation,
+                        motors[slave].operation_enabled,
+                        motors[slave].ec_connected);
                 }
                 printf("\n");
             }
