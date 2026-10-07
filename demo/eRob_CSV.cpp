@@ -677,58 +677,65 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
             /**
-             * Working counter matched expected
-             * Detected the expected number of slaves
+             * Check the connection status of each slave on the bus using working counter
+             * Each slave expected to increment working counter 3 times each
+             * i.e. 10 slaves --> wkc == 30 
              */
-            if (wkc >= expectedWKC) {
-                retry_count = 0;  // Reset retry counter
-                
-                // copy TXPDO data into local array and update state machine
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(&(motors[slave].txpdo), ec_slave[slave].inputs, sizeof(txpdo_t));
-                    cia402_state_machine(&motors[slave]);
+            for (int slave = 1; slave <= ec_slavecount; slave++) {
+                bool slave_connected = (wkc >= (slave * 3));
+                // if motor just disconnected (falling edge)
+                if (motors[slave].ec_connected && !slave_connected) {
+                    cia402_lost_motor(&motors[slave]);
                 }
+                motors[slave].ec_connected = slave_connected;
+            }
 
-                // set target velocity if in operation enabled state
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    if (motors[slave].operation_enabled) {
-                        motors[slave].rxpdo.target_velocity = 20000;
-                    }
-                    else {
-                        motors[slave].rxpdo.target_velocity = 0;
-                    }
-                }
-
-                // Copy RXPDO data from local array to SOEM for sending
-                for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
-                }
-
-                // print TXPDO data every 100 ticks
-                if (dorun % 100 == 0) {
-                    for (int slave = 1; slave <= ec_slavecount; slave++) {
-                        printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d\n", slave,
-                           motors[slave].txpdo.statusword,
-                           motors[slave].txpdo.actual_position,
-                           motors[slave].txpdo.actual_velocity,
-                           motors[slave].rxpdo.target_velocity, 
-                           motors[slave].rxpdo.mode_of_operation);
-                    }
-                }
-            } 
-            
             /**
-             * Working counter did not match expected
-             * Less slaves than expected
-             * To-do: continue normal operation with warning that WKC did not match expected
-             * and setting all the disconnected motors to fault state
+             * Update process data
              */
-            else {
-                retry_count++;
-                if (retry_count >= MAX_RETRY) {
-                    printf("ERROR: Communication failure after %d retries\n", retry_count);
-                    retry_count = 0;
+            for (int slave = 1; slave <= ec_slavecount; slave++) {
+                // skip disconnected slaves
+                if (!motors[slave].ec_connected) {
+                    continue;
                 }
+
+                // copy TXPDO data into local array and update state machine
+                memcpy(&(motors[slave].txpdo), ec_slave[slave].inputs, sizeof(txpdo_t));
+                bool motor_faulted = motors[slave].faulted;
+                cia402_state_machine(&motors[slave]);
+
+                // motor just faulted
+                if (!motor_faulted && motors[slave].faulted) {
+                    printf("FAULT: Slave %d, SW=0x%04x\n", slave, motors[slave].txpdo.statusword);
+                }
+
+                // set target velocities
+                if (motors[slave].operation_enabled) {
+                    motors[slave].rxpdo.target_velocity = -2000;
+                } else {
+                    motors[slave].rxpdo.target_velocity = 0;
+                }
+
+                // copy RXPDO data from local array to SOEM array
+                memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
+            }
+
+            // print TXPDO data every 100 ticks
+            if (dorun % 100 == 0) {
+                printf("WKC: %d | expected WKC: %d\n", wkc, expectedWKC);
+                for (int slave = 1; slave <= ec_slavecount; slave++) {
+                    printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+                        motors[slave].txpdo.statusword,
+                        motors[slave].rxpdo.controlword,
+                        motors[slave].txpdo.actual_position,
+                        motors[slave].txpdo.actual_velocity,
+                        motors[slave].rxpdo.target_velocity, 
+                        motors[slave].rxpdo.mode_of_operation,
+                        motors[slave].faulted,
+                        motors[slave].operation_enabled,
+                        motors[slave].ec_connected);
+                }
+                printf("\n");
             }
 
             // clock synchronization

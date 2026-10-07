@@ -66,12 +66,28 @@ void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation) {
     // initialise RXPDO
     motor->rxpdo.controlword = CW_FAULT_RESET_CMD;
     motor->rxpdo.mode_of_operation = mode_of_operation;
+    motor->rxpdo.target_velocity = 0;
     motor->rxpdo.padding = 0;
 
     // initialise motor state variables
     motor->state = NOT_READY_TO_SWITCH_ON;
     motor->faulted = false;
     motor->operation_enabled = false;
+    motor->ec_connected = true;
+    motor->step = 0;
+}
+
+void cia402_lost_motor(cia402_motor_t *motor) {
+    // reset RXPDO
+    motor->rxpdo.controlword = 0x0000;  // safe control word
+    motor->rxpdo.target_velocity = 0;
+    motor->rxpdo.padding = 0;
+
+    // reset motor state variables
+    motor->state = NOT_READY_TO_SWITCH_ON;
+    motor->faulted = true;
+    motor->operation_enabled = false;
+    motor->ec_connected = false;
     motor->step = 0;
 }
 

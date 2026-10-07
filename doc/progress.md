@@ -29,3 +29,7 @@ Updates:
 To do:  
 - Handle ethercat communication error (i.e. when a motor loses power or comms link)
 - Assign different PDO mappings based on motor position to allow different motors to have different control modes
+
+**23/09/26 Log** 
+Updates:
+- EtherCAT communcation failure detection working
