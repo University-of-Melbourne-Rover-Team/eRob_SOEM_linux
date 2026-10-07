@@ -77,9 +77,9 @@ void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation) {
     motor->step = 0;
 }
 
-void cia402_lost_motor(cia402_motor_t *motor, const bool ec_connected) {
+void cia402_lost_motor(cia402_motor_t *motor) {
     // reset RXPDO
-    motor->rxpdo.controlword = CW_FAULT_RESET_CMD;
+    motor->rxpdo.controlword = 0x0000;  // safe control word
     motor->rxpdo.target_velocity = 0;
     motor->rxpdo.padding = 0;
 
@@ -87,7 +87,7 @@ void cia402_lost_motor(cia402_motor_t *motor, const bool ec_connected) {
     motor->state = NOT_READY_TO_SWITCH_ON;
     motor->faulted = true;
     motor->operation_enabled = false;
-    motor->ec_connected = ec_connected;
+    motor->ec_connected = false;
     motor->step = 0;
 }
 

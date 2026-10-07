@@ -132,11 +132,11 @@ uint16_t cia402_control_word(CIA402_STATE state);
 void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation);
 
 /**
- * Reset cia402 motor's RXPDO and state variables when comms are lost
- * @param {cia402_motor_t *}: motor, {const bool}: ec_connected, ethercat connected
+ * Put cia402 motor's RXPDO and state variables into safe mode when comms are lost
+ * @param {cia402_motor_t *}: motor
  * @return {void}
  */
-void cia402_lost_motor(cia402_motor_t *motor, const bool ec_connected);
+void cia402_lost_motor(cia402_motor_t *motor);
 
 /**
  * CiA 402 state machine control  

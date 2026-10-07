@@ -672,39 +672,16 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
             wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
             /**
-             * Working counter matched expected
-             * Detected the expected number of slaves
-             */
-            if (wkc >= expectedWKC) {
-                retry_count = 0;
-            } else {
-                retry_count++;
-                if (retry_count >= MAX_RETRY) {
-                    printf("ERROR: Communication failure after %d retries\n", retry_count);
-                    retry_count = 0;
-                }
-            }
-
-            /**
-             * Check the connection status of each slave on the bus
+             * Check the connection status of each slave on the bus using working counter
+             * Each slave expected to increment working counter 3 times each
+             * i.e. 10 slaves --> wkc == 30 
              */
             for (int slave = 1; slave <= ec_slavecount; slave++) {
-                bool slave_connected = (ec_slave[slave].state == EC_STATE_OPERATIONAL) &&
-                                      !ec_slave[slave].islost;
- 
+                bool slave_connected = (wkc >= (slave * 3));
                 // if motor just disconnected (falling edge)
                 if (motors[slave].ec_connected && !slave_connected) {
-                    printf("ERROR: Communication failure between slave %d and slave %d "
-                           "(slave %d state=0x%02x, wkc=%d, expectedWKC=%d)\n",
-                           slave - 1, slave, slave, ec_slave[slave].state, wkc, expectedWKC);
-                    cia402_lost_motor(&motors[slave], slave_connected);
-                } 
-                // else if motor just reconnected (rising edge)
-                else if (!motors[slave].ec_connected && slave_connected) {
-                    printf("MESSAGE: Slave %d communication restored, re-enabling\n", slave);
-                    cia402_init_motor(&motors[slave], MODE_CSV);
+                    cia402_lost_motor(&motors[slave]);
                 }
- 
                 motors[slave].ec_connected = slave_connected;
             }
 
@@ -727,27 +704,29 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                     printf("FAULT: Slave %d, SW=0x%04x\n", slave, motors[slave].txpdo.statusword);
                 }
 
-                // set target velocity if in operation enabled state
+                // set target velocities
                 if (motors[slave].operation_enabled) {
-                        motors[slave].rxpdo.target_velocity = 20000;
-                }
-                else {
+                    motors[slave].rxpdo.target_velocity = -2000;
+                } else {
                     motors[slave].rxpdo.target_velocity = 0;
                 }
 
-                // copy RXPDO data from local array to SOEM array for sending
+                // copy RXPDO data from local array to SOEM array
                 memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
             }
 
             // print TXPDO data every 100 ticks
             if (dorun % 100 == 0) {
+                printf("WKC: %d | expected WKC: %d\n", wkc, expectedWKC);
                 for (int slave = 1; slave <= ec_slavecount; slave++) {
-                    printf("Slave %d status: SW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d, op_en=%d, ec_connected=%d\n", slave,
+                    printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d, fault=%d, op_en=%d, ec_connected=%d\n", slave,
                         motors[slave].txpdo.statusword,
+                        motors[slave].rxpdo.controlword,
                         motors[slave].txpdo.actual_position,
                         motors[slave].txpdo.actual_velocity,
                         motors[slave].rxpdo.target_velocity, 
                         motors[slave].rxpdo.mode_of_operation,
+                        motors[slave].faulted,
                         motors[slave].operation_enabled,
                         motors[slave].ec_connected);
                 }
