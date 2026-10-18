@@ -28,12 +28,12 @@ pub(crate) fn create_kinematics_state(urdf_path: &Path) -> Result<KinematicsStat
     Ok(KinematicsState { chain, joint_names })
 }
 
-/// Computes the world-space position of a link after applying joint values.
-pub(crate) fn link_position_from_joint_values(
+/// Computes the world-space position and URDF RPY of a link after applying joint values.
+pub(crate) fn link_pose_from_joint_values(
     kinematics: &mut KinematicsState,
     joint_values: &HashMap<String, f32>,
     target_link: &str,
-) -> Result<Vec3, String> {
+) -> Result<(Vec3, Vec3), String> {
     let positions = kinematics
         .joint_names
         .iter()
@@ -53,10 +53,14 @@ pub(crate) fn link_position_from_joint_values(
         .world_transform()
         .ok_or_else(|| format!("target link '{target_link}' has no world transform"))?;
     let translation = target_transform.translation.vector;
-    Ok(Vec3::new(
-        translation.x as f32,
-        translation.y as f32,
-        translation.z as f32,
+    let (roll, pitch, yaw) = target_transform.rotation.euler_angles();
+    Ok((
+        Vec3::new(
+            translation.x as f32,
+            translation.y as f32,
+            translation.z as f32,
+        ),
+        Vec3::new(roll as f32, pitch as f32, yaw as f32),
     ))
 }
 

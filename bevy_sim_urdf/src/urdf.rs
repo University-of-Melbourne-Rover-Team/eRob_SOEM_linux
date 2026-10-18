@@ -22,6 +22,12 @@ pub(crate) fn resolve_mesh_path(
         return mesh_dir.join(mesh_path.file_name().unwrap_or_default());
     }
 
+    if let Some(relative_path) = mesh_file.strip_prefix("package://urdf_assembly/meshes/") {
+        return urdf_dir
+            .join("../meshes_onshape_rigid_stl")
+            .join(relative_path);
+    }
+
     urdf_dir.join(mesh_path)
 }
 

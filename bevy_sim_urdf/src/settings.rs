@@ -96,7 +96,7 @@ pub(crate) fn parse_viewer_settings(repo_root: &Path) -> ViewerSettings {
         urdf_path.unwrap_or_else(|| {
             PathBuf::from("assets")
                 .join("urdf")
-                .join("urdf_assembly_rigid_stl_collapsed.urdf")
+                .join("urdf_assembly.urdf")
         }),
     );
     let mesh_dir_override = mesh_dir_override.map(|path| resolve_repo_path(repo_root, path));

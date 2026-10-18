@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use crate::constants::{JOINT_SPEED, TARGET_MOVE_SPEED, TARGET_ROTATE_SPEED, TASK_TARGET_LINK};
 use crate::hardware::HardwareBridge;
 use crate::kinematics::{
-    KinematicsState, create_kinematics_state, link_position_from_joint_values,
+    KinematicsState, create_kinematics_state, link_pose_from_joint_values,
     solve_task_space_ik_values,
 };
 use crate::mesh::load_binary_stl_mesh;
@@ -92,18 +92,22 @@ pub(crate) fn setup(
 
     let mut kinematics = create_kinematics_state(&settings.urdf_path)
         .expect("failed to initialize k kinematics state");
-    let task_target = settings.target_xyz.unwrap_or_else(|| {
-        link_position_from_joint_values(
-            &mut kinematics,
-            &settings.initial_joint_values,
-            TASK_TARGET_LINK,
-        )
-        .unwrap_or(Vec3::new(-0.20, 0.30, 0.28))
-    });
+    let (current_position, current_rpy) = link_pose_from_joint_values(
+        &mut kinematics,
+        &settings.initial_joint_values,
+        TASK_TARGET_LINK,
+    )
+    .unwrap_or_else(|error| panic!("failed to initialize task-space target: {error}"));
+    let task_target = settings.target_xyz.unwrap_or(current_position);
+    let task_rpy = if settings.target_orientation_enabled {
+        settings.target_rpy
+    } else {
+        current_rpy
+    };
     commands.insert_resource(TaskSpaceControl {
         enabled: settings.target_xyz.is_some(),
         target: task_target,
-        target_rpy: settings.target_rpy,
+        target_rpy: task_rpy,
         target_orientation_enabled: settings.target_orientation_enabled,
         target_link: TASK_TARGET_LINK.to_string(),
     });
@@ -113,7 +117,7 @@ pub(crate) fn setup(
         &mut meshes,
         &mut materials,
         task_target,
-        settings.target_rpy,
+        task_rpy,
     );
 
     let mut link_entities = HashMap::new();
@@ -299,17 +303,31 @@ pub(crate) fn drive_task_space_target(
     if hardware.as_ref().is_some_and(|bridge| !bridge.can_command()) {
         return;
     }
+    let current_values = joints
+        .iter_mut()
+        .map(|(joint, _)| (joint.name.clone(), joint.value))
+        .collect::<HashMap<_, _>>();
     if keyboard.just_pressed(KeyCode::KeyM) {
-        task_control.enabled = !task_control.enabled;
-        if task_control.enabled && hardware.is_some() {
-            let actual = joints.iter().map(|(joint, _)| (joint.name.clone(), joint.value)).collect();
-            if let Ok(position) = link_position_from_joint_values(
-                &mut kinematics, &actual, &task_control.target_link,
+        if !task_control.enabled {
+            match link_pose_from_joint_values(
+                &mut kinematics,
+                &current_values,
+                &task_control.target_link,
             ) {
-                task_control.target = position;
-                task_control.target_orientation_enabled = false;
+                Ok((position, rpy)) => {
+                    task_control.target = position;
+                    task_control.target_rpy = rpy;
+                    if hardware.is_some() {
+                        task_control.target_orientation_enabled = false;
+                    }
+                }
+                Err(error) => {
+                    warn!("cannot enable task-space IK: {error}");
+                    return;
+                }
             }
         }
+        task_control.enabled = !task_control.enabled;
         println!(
             "task-space IK: {}",
             if task_control.enabled {
@@ -370,6 +388,21 @@ pub(crate) fn drive_task_space_target(
         task_control.target += direction.normalize() * TARGET_MOVE_SPEED * time.delta_secs();
     }
     if rotated {
+        if !task_control.target_orientation_enabled {
+            // Position-only IK and manual joint motion can change the tool's
+            // orientation. Start the first rotation from its actual pose.
+            match link_pose_from_joint_values(
+                &mut kinematics,
+                &current_values,
+                &task_control.target_link,
+            ) {
+                Ok((_, rpy)) => task_control.target_rpy = rpy,
+                Err(error) => {
+                    warn!("cannot initialize target orientation: {error}");
+                    return;
+                }
+            }
+        }
         task_control.target_orientation_enabled = true;
         task_control.target_rpy +=
             rotation_delta.normalize() * TARGET_ROTATE_SPEED * time.delta_secs();
@@ -382,11 +415,6 @@ pub(crate) fn drive_task_space_target(
     if !(moved || rotated) {
         return;
     }
-
-    let current_values = joints
-        .iter_mut()
-        .map(|(joint, _)| (joint.name.clone(), joint.value))
-        .collect::<HashMap<_, _>>();
 
     match solve_task_space_ik_values(
         &mut kinematics,
@@ -408,10 +436,8 @@ pub(crate) fn drive_task_space_target(
                 }
             }
         }
-        Err(_error) => {
-            warn!(
-                "task-space IK did not converge; target may be unreachable or near a singularity"
-            );
+        Err(error) => {
+            warn!("task-space IK: {error}");
         }
     }
 }
@@ -502,7 +528,7 @@ fn spawn_target_marker(
     target_rpy: Vec3,
 ) {
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.035, 0.035, 0.035))),
+        Mesh3d(meshes.add(Cuboid::new(0.005, 0.005, 0.005))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.2, 0.15),
             emissive: Color::srgb(0.45, 0.04, 0.02).into(),
@@ -531,13 +557,15 @@ pub(crate) fn seed_hardware_task_target(
     if !hardware.reset_task_target { return; }
     hardware.reset_task_target = false;
     let actual = joints.iter().map(|joint| (joint.name.clone(), joint.value)).collect();
-    if let Ok(position) = link_position_from_joint_values(
+    if let Ok((position, rpy)) = link_pose_from_joint_values(
         &mut kinematics, &actual, &task_control.target_link,
     ) {
         task_control.target = position;
+        task_control.target_rpy = rpy;
         task_control.target_orientation_enabled = false;
         for mut transform in &mut marker {
             transform.translation = position;
+            transform.rotation = rpy_quat(rpy);
         }
     }
 }
