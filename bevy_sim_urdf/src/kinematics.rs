@@ -290,7 +290,7 @@ fn rpy_quat_f64(rpy: Vec3) -> UnitQuaternion<f64> {
 const COUNTS_PER_TURN: f64 = 524288.0;
 
 pub(crate) fn radians_to_counts(radians: f64) -> Result<i32, String> {
-    let counts = (radians * COUNTS_PER_TURN / std::f64::consts::TAU).round();
+    let counts = (radians * COUNTS_PER_TURN / std::f64::consts::TAU + 262_144.0).round();
     if !counts.is_finite() || counts < i32::MIN as f64 || counts > i32::MAX as f64 {
         return Err("Target is outside signed 32-bit encoder range".to_string());
     }
@@ -298,5 +298,5 @@ pub(crate) fn radians_to_counts(radians: f64) -> Result<i32, String> {
 }
 
 pub(crate) fn counts_to_radians(counts: i32) -> f32 {
-    (counts as f64 * std::f64::consts::TAU / COUNTS_PER_TURN) as f32
+    ((counts as f64 - 262_144.0) * std::f64::consts::TAU / COUNTS_PER_TURN) as f32
 }
