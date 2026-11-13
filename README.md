@@ -5,7 +5,7 @@ https://github.com/openethercatsociety/soem
 This implementation is adapted from the eRob_SOEM_Linux repository from ZeroErr.  
 https://github.com/ZeroErrControl/eRob_SOEM_linux  
   
-`./demo/` contains multiple independent programs which implement deomnstrations of CiA-402 control modes.  
+`./demo/` contains multiple independent programs which implement demonstrations of CiA-402 control modes.  
 `./src/main.cpp` contains the main program that runs on the URT rover's maindevice.  
 > **Note:** This program works with Ubuntu Linux with real-time kernel capabilities. Compatability with other OS not been tested.
 

@@ -1,3 +1,5 @@
 /build/
-/tmp/csp.sock
-.vscode
+/install/
+cmake-build-*/
+.vscode/
+/tmp/

@@ -1,13 +1,5 @@
-cmake_minimum_required(VERSION 3.8)
-project(urt_ecat_soem)
-
-
-# project(urt_ecat_soem LANGUAGES C CXX)
-find_package(Threads REQUIRED)
-
-include_directories(/home/erobman/SOEM_ethercat/install/SOEM/include/soem)
-link_directories(/home/erobman/SOEM_ethercat/install/SOEM/lib)
-
+# URT EtherCAT main-device
 add_executable(main main.cpp)
-target_link_libraries(main cia402 soem)
+target_link_libraries(main PRIVATE cia402 soem Threads::Threads)
+target_compile_options(main PRIVATE -Wall -Wextra)
 install(TARGETS main DESTINATION bin)

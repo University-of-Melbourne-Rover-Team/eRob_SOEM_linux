@@ -6,6 +6,13 @@ project(SOEM
     LANGUAGES C CXX
 )
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+option(BUILD_DEMOS "Build the eRob CiA 402 control mode demos in demo/" ON)
+
+find_package(Threads REQUIRED)
+
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)   # Default to installing in SOEM source directory
     set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_LIST_DIR}/install)
 endif()
@@ -99,6 +106,11 @@ target_include_directories(soem
 )
 
 add_subdirectory(cia402)
+add_subdirectory(src)
+
+if(BUILD_DEMOS)
+    add_subdirectory(demo)
+endif()
 
 message(STATUS "LIB_DIR: ${SOEM_LIB_INSTALL_DIR}")
 
@@ -119,6 +131,4 @@ if(BUILD_TESTS)
     add_subdirectory(test/linux/slaveinfo)
     add_subdirectory(test/linux/eepromtool)
     add_subdirectory(test/linux/simple_test)
-    add_subdirectory(demo)
-    add_subdirectory(src)
 endif()
