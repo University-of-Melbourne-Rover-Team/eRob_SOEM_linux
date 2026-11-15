@@ -32,3 +32,11 @@ $ ps -T -o tid,cls,rtprio,psr,comm -p $(pgrep -x main)
   20642  FF     20   3 ecat_check
 ```
 The process `./build/src/main` has three threads. The `main` thread is under time sharing scheduling policy (`SCHED_NORMAL`), and `ecat_rt` and `ecat_check` are under FIFO policy. with `ecat_rt` at a higher priority.  
+
+### #3.
+The `ecat_check` thread monitors the state of the EtherCAT bus. When EtherCAT communication is lost with a motor, or a motor is no longer is OP mode, the `ecat_check` thread attempts to recover it.  
+Currently the `ecat_check` thread can recover a slave into SAFE-OP mode, but not OP mode.  
+When running a test where a cable between motor 4 and 5 is physically unplugged, motors 5 and 6 enter `INIT->PRE-OP->SAFE-OP`, but never reenters `OP`.  
+Potential cause:
+ - While cable was unplugged, the motors Distributed Clocks (DC) became out of sync. The motor internal software may prevent motor from entering OP if its DC sync is within a tolerance.
+ 
