@@ -30,14 +30,13 @@ constexpr int THREAD_STACK_SIZE = 128 * 1024;
 // Slave state monitoring timeout used by the check thread (us)
 constexpr int EC_TIMEOUTMON = 5000;
 
-// Drive parameters written in step 9
+// Drive parameters
 constexpr int8_t OPERATION_MODE = MODE_CSV;
 constexpr int32_t MAX_VELOCITY = 30000;
 constexpr int32_t MAX_ACCELERATION = 30000;
 constexpr int32_t QUICK_STOP_DECEL = 30000;
 
-// Fixed target velocity applied to every enabled motor
-constexpr int32_t DEMO_TARGET_VELOCITY = -2000;
+constexpr int32_t DEMO_TARGET_VELOCITY = 0;
 
 // Print TXPDO data every N cycles
 constexpr int TELEMETRY_PRINT_INTERVAL = 100;

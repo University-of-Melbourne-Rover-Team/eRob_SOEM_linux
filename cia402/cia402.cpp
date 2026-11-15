@@ -99,6 +99,7 @@ void cia402_state_machine(cia402_motor_t *motor) {
     // check for unknown state
     if (motor->state == UNKNOWN) {
         motor->rxpdo.controlword = 0x0000U; // safe control word
+        motor->faulted = true;
         motor->operation_enabled = false;
         motor->step = 0;    // reset state machine progression
         return;
@@ -107,6 +108,7 @@ void cia402_state_machine(cia402_motor_t *motor) {
     // check for fault reaction
     if (motor->state == QUICK_STOP_ACTIVE || motor->state == FAULT_REACTION_ACTIVE) {
         motor->rxpdo.controlword = CW_QUICK_STOP_CMD; // safe control word
+        motor->faulted = true;
         motor->operation_enabled = false;
         motor->step = 0;    // reset state machine progression
         return;
