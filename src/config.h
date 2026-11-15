@@ -21,8 +21,12 @@ constexpr uint32_t SYNC0_CYCLE_NS = CYCLE_TIME_US * 1000;
 constexpr int MAX_MOTORS = 16;
 
 // Process real-time settings
-constexpr int PROCESS_PRIORITY = 99;
 constexpr int PROCESS_CPU_CORES[] = {2, 3};
+
+// SCHED_FIFO policy thread priorities
+// 1-99, higher runs first. Main thread stays on SCHED_OTHER policy
+constexpr int RT_THREAD_PRIORITY = 90;  // real-time ethercat loop thread
+constexpr int CHECK_THREAD_PRIORITY = 20;   // ecat comms status check/recover thread
 
 // Stack size for the RT and check threads
 constexpr int THREAD_STACK_SIZE = 128 * 1024;

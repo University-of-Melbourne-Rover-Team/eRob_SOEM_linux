@@ -1,17 +1,11 @@
 #include "rt_utils.h"
 
 #include <cstdio>
+#include <cstring>
 #include <sched.h>
 #include <sys/mman.h>
 
-bool rt_setup_process(int priority, const int *cores, size_t n_cores) {
-    // Set the real-time priority
-    struct sched_param param = {};
-    param.sched_priority = priority;
-    if (sched_setscheduler(0, SCHED_FIFO, &param) == -1) {
-        perror("sched_setscheduler failed");
-    }
-
+bool rt_setup_process(const int *cores, size_t n_cores) {
     // Lock memory
     if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1) {
         perror("mlockall failed");
@@ -33,6 +27,30 @@ bool rt_setup_process(int priority, const int *cores, size_t n_cores) {
         printf(" %d", cores[i]);
     }
     printf("\n");
+    return true;
+}
+
+bool rt_thread_create(pthread_t *thread, const char *name, int priority, size_t stack_size,
+                      void *(*func)(void *), void *arg) {
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, stack_size);
+
+    struct sched_param param = {};
+    param.sched_priority = priority;
+    pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+    pthread_attr_setschedparam(&attr, &param);
+
+    int ret = pthread_create(thread, &attr, func, arg);
+    pthread_attr_destroy(&attr);
+    if (ret != 0) {
+        printf("Error: Could not create thread %s (FIFO %d): %s\n", name, priority, strerror(ret));
+        return false;
+    }
+
+    pthread_setname_np(*thread, name);
+    printf("Thread %s started (SCHED_FIFO %d)\n", name, priority);
     return true;
 }
 

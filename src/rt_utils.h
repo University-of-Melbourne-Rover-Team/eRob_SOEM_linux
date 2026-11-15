@@ -9,15 +9,26 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <pthread.h>
 
 #define NSEC_PER_SEC 1000000000
 
 /**
- * Sets SCHED_FIFO priority and sets process to CPU cores
- * @param {int} priority: SCHED_FIFO priority, {const int *} cores: CPU core list, {size_t} n_cores
+ * Locks memory and sets process to CPU cores
+ * Scheduling priority is set per thread with rt_thread_create()
+ * @param {const int *} cores: CPU core list, {size_t} n_cores
  * @return {bool}: false if CPU affinity could not be set
  */
-bool rt_setup_process(int priority, const int *cores, size_t n_cores);
+bool rt_setup_process(const int *cores, size_t n_cores);
+
+/**
+ * Creates a named SCHED_FIFO thread with an explicit priority
+ * @param {pthread_t *} thread, {const char *} name, {int} priority: SCHED_FIFO priority,
+ * {size_t} stack_size, {void *(*)(void *)} func, {void *} arg
+ * @return {bool}: false if the thread could not be created
+ */
+bool rt_thread_create(pthread_t *thread, const char *name, int priority, size_t stack_size,
+                      void *(*func)(void *), void *arg);
 
 /**
  * Adds nanoseconds to a struct timespec and normalizes the result

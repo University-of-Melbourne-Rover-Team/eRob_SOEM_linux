@@ -92,7 +92,7 @@ void print_motors() {
  * RT EtherCAT thread
  * Sends and receives process data every cycle, synchronised to the distributed clock
  */
-OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
+void *ecatthread(void *ptr) {
     const int cycle_time_us = *(int *)ptr;
     const int64_t cycletime = (int64_t)cycle_time_us * 1000;
     const int MAX_MISSED_CYCLES = 10;
@@ -173,7 +173,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
  * EtherCAT check thread
  * Monitors slave states and attempts to recover slaves that are not operational
  */
-OSAL_THREAD_FUNC ecatcheck(void *ptr) {
+void *ecatcheck(void *ptr) {
     (void)ptr;
     int consecutive_errors = 0;
     const int MAX_CONSECUTIVE_ERRORS = 5;
@@ -247,13 +247,12 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr) {
 bool ecat_rt_start(int cycle_time_us) {
     cycle_time_us_param = cycle_time_us;
 
-    // TODO(step 3): RT thread runs at FIFO 40 while the check thread inherits the process priority (99)
-    if (!osal_thread_create_rt(&ecatrt_thread, config::THREAD_STACK_SIZE, (void *)&ecatthread, &cycle_time_us_param)) {
-        printf("Error: Could not create RT EtherCAT thread\n");
+    if (!rt_thread_create(&ecatrt_thread, "ecat_rt", config::RT_THREAD_PRIORITY,
+                          config::THREAD_STACK_SIZE, ecatthread, &cycle_time_us_param)) {
         return false;
     }
-    if (!osal_thread_create(&ecat_check_thread, config::THREAD_STACK_SIZE, (void *)&ecatcheck, NULL)) {
-        printf("Error: Could not create EtherCAT check thread\n");
+    if (!rt_thread_create(&ecat_check_thread, "ecat_check", config::CHECK_THREAD_PRIORITY,
+                          config::THREAD_STACK_SIZE, ecatcheck, NULL)) {
         return false;
     }
     return true;

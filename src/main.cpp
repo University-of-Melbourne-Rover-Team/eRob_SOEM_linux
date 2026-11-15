@@ -50,8 +50,7 @@ int main(int argc, char **argv) {
     // use default if no command line input
     const char *if_name = (argc > 1) ? argv[1] : config::DEFAULT_IF_NAME;
 
-    if (!rt_setup_process(config::PROCESS_PRIORITY, config::PROCESS_CPU_CORES,
-                          std::size(config::PROCESS_CPU_CORES))) {
+    if (!rt_setup_process(config::PROCESS_CPU_CORES, std::size(config::PROCESS_CPU_CORES))) {
         return EXIT_FAILURE;
     }
 
