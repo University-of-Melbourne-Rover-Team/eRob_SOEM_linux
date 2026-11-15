@@ -711,7 +711,7 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
 
                 // set target velocities
                 if (motors[slave].operation_enabled) {
-                    motors[slave].rxpdo.target_velocity = -2000;
+                    motors[slave].rxpdo.target_velocity = 0;
                 } else {
                     motors[slave].rxpdo.target_velocity = 0;
                 }
