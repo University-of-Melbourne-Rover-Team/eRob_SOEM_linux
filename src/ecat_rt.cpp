@@ -179,7 +179,6 @@ void *ecatcheck(void *ptr) {
     const int MAX_CONSECUTIVE_ERRORS = 5;
 
     while (1) {
-        // TODO(step 3): inOP is never set, so this block does not run yet
         if (inOP && ((wkc < expectedWKC) || ec_group[currentgroup].docheckstate)) {
             if (wkc < expectedWKC) {
                 consecutive_errors++;

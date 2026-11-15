@@ -7,7 +7,7 @@
 
 int expectedWKC = 0;
 volatile int wkc = 0;
-bool inOP = false;
+std::atomic<bool> inOP{false};
 uint8 currentgroup = 0;
 
 static char IOmap[4096];
@@ -199,8 +199,10 @@ bool ecat_request_op() {
                ec_ALstatuscode2string(ec_slave[i].ALstatuscode), wkc, expectedWKC);
     }
 
-    // TODO(step 3): set inOP = true here so the check thread monitors slave states
-    return ec_slave[0].state == EC_STATE_OPERATIONAL;
+    // start slave state monitoring in the check thread once every slave in OP state
+    bool all_in_op = (ec_slave[0].state == EC_STATE_OPERATIONAL);
+    inOP = all_in_op;
+    return all_in_op;
 }
 
 void ecat_configure_drives() {
@@ -234,6 +236,7 @@ void ecat_configure_drives() {
 
 void ecat_shutdown() {
     // TODO(step 4): request INIT before ec_close(), and stop the RT threads first
+    inOP = false;
     ec_close();
 
     printf("Request init state for all slaves\n");

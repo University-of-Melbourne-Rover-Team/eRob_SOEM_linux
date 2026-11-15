@@ -43,7 +43,7 @@ constexpr int32_t QUICK_STOP_DECEL = 30000;
 constexpr int32_t DEMO_TARGET_VELOCITY = 0;
 
 // Print TXPDO data every N cycles
-constexpr int TELEMETRY_PRINT_INTERVAL = 100;
+constexpr int TELEMETRY_PRINT_INTERVAL = 1000;
 
 }
 

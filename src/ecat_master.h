@@ -8,11 +8,13 @@
 
 #include "ethercat.h"
 
+#include <atomic>
+
 // Bus state shared with the RT and check threads (ecat_rt.cpp)
-extern int expectedWKC;     // expected working counter
-extern volatile int wkc;    // last received working counter
-extern bool inOP;           // true when the check thread should monitor slave states
-extern uint8 currentgroup;  // EtherCAT group monitored by the check thread
+extern int expectedWKC;         // expected working counter
+extern volatile int wkc;        // last received working counter
+extern std::atomic<bool> inOP;  // true when the check thread should monitor slave states
+extern uint8 currentgroup;      // EtherCAT group monitored by the check thread
 
 /**
  * Initialises the EtherCAT master on a network interface and enumerates slaves (step 1)
