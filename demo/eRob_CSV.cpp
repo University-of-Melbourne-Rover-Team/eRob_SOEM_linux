@@ -708,15 +708,14 @@ OSAL_THREAD_FUNC_RT ecatthread(void *ptr) {
                 if (!motor_faulted && motors[slave].faulted) {
                     printf("FAULT: Slave %d, SW=0x%04x\n", slave, motors[slave].txpdo.statusword);
                 }
-            }
 
-            if (motors[1].operation_enabled) motors[1].rxpdo.target_velocity = -5000;
-            if (motors[2].operation_enabled) motors[2].rxpdo.target_velocity = 0;
-            if (motors[3].operation_enabled) motors[3].rxpdo.target_velocity = 0;
-            if (motors[4].operation_enabled) motors[4].rxpdo.target_velocity = -10000;
-            if (motors[5].operation_enabled) motors[5].rxpdo.target_velocity = -10000;
+                // set target velocities
+                if (motors[slave].operation_enabled) {
+                    motors[slave].rxpdo.target_velocity = 0;
+                } else {
+                    motors[slave].rxpdo.target_velocity = 0;
+                }
 
-            for (int slave = 1; slave <= ec_slavecount; slave++) {
                 // copy RXPDO data from local array to SOEM array
                 memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
             }

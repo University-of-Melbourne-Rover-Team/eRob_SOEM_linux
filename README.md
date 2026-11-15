@@ -6,7 +6,7 @@ This implementation is adapted from the eRob_SOEM_Linux repository from ZeroErr.
 https://github.com/ZeroErrControl/eRob_SOEM_linux  
   
 `./demo/` contains multiple independent programs which implement demonstrations of CiA-402 control modes.  
-`./src/main.cpp` contains the main program that runs on the URT rover's maindevice.  
+`./src/` contains the main program that runs on the URT rover's maindevice.  
 > **Note:** This program works with Ubuntu Linux with real-time kernel capabilities. Compatability with other OS not been tested.
 
 ### URT maindevice usage
@@ -16,31 +16,54 @@ First run:
 ```bash
 ip link
 ```
-To obtain network interface string of EtherCAT port (Usually `enx...` or `enp...`).  
-In `main()`, check the `if_name` string matches the network interface of EtherCAT port.  
-```c
-const char *if_name = "enp...";
-```
+... to obtain network interface string of EtherCAT port (Usually `enx...` or `enp...`).  
+
+In `/src/config.h`, check the `DEFAULT_IF_NAME` string matches the network interface of EtherCAT port OR run the executable with the `if_name` string as command line input (step 3).  
 
 To verify linkstate, run:
 ```bash
 ethtool <if_name>
 ```
-Should output `Link detected: yes`
+If the EtherCAT cable is connected, it should output `Link detected: yes`
 
-2. **Build executable:**
+2. **Build executables:**
 ```bash
 mkdir build  
 cd build  
 cmake ..  
 make  
 ```
+
+Note this builds the `src/main` executable and the `demo/` executables.  
+To build only the `src/main`, configure cmake:  
+```bash
+mkdir build  
+cd build  
+cmake -DBUILD_DEMOS=OFF ..  
+make  
+```
+
 3. **Run executable:**  
+
+Option 1: With default network interface:  
 ```bash
 sudo ./build/src/main
 ```
 
+Option 2: With another network interface:  
+```bash
+sudo ./build/src/main <if_name>
+```
+
 ## eRob Demo Usage
+### Build executables
+```bash
+mkdir build  
+cd build  
+cmake -DBUILD_DEMOS=ON ..  
+make  
+```
+
 ### Running demo:
 
 1. CSV mode:
