@@ -1,6 +1,6 @@
 /**
  * EtherCAT bus bring-up and shutdown
- * Call in order: init -> preop -> map PDOs -> config map/DC -> safeop -> (start RT threads) -> op -> configure drives
+ * Call in order: init -> preop -> map PDOs -> configure drives -> config map/DC -> safeop -> (start RT threads) -> op
  */
 
 #ifndef URT_ECAT_MASTER_H
@@ -25,13 +25,13 @@ bool ecat_init(const char *if_name);
 
 /**
  * Requests PRE-OP for all slaves (step 2)
- * @return {bool}: false on failure
+ * @return {bool}: false if any slave not in pre-op
  */
 bool ecat_request_preop();
 
 /**
  * Writes the CSV RXPDO and TXPDO mappings to all slaves (step 3)
- * @return {bool}: false on failure
+ * @return {bool}: false if any SDO write failed
  */
 bool ecat_map_pdos();
 
@@ -54,10 +54,11 @@ bool ecat_request_safeop();
 bool ecat_request_op();
 
 /**
- * Writes operation mode and motion limits to all drives over SDO (step 9)
- * @return {void}
+ * Writes motion limits to all drives over SDO
+ * Slaves must be in PRE-OP
+ * @return {bool} true if drive parameters were set successfully
  */
-void ecat_configure_drives();
+bool ecat_configure_drives();
 
 /**
  * Closes the EtherCAT master

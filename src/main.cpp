@@ -23,6 +23,7 @@ static int run(const char *if_name) {
     if (!ecat_init(if_name)) return -1;
     if (!ecat_request_preop()) return -1;
     if (!ecat_map_pdos()) return -1;
+    if (!ecat_configure_drives()) return -1;
     if (!ecat_config_map_and_dc()) return -1;
     if (!ecat_request_safeop()) return -1;
 
@@ -32,7 +33,6 @@ static int run(const char *if_name) {
 
     if (ecat_request_op()) {
         printf("LOG: Operational state reached for all slaves.\n");
-        ecat_configure_drives();
 
         // TODO(step 4): replace with signal-driven shutdown
         while (1) {

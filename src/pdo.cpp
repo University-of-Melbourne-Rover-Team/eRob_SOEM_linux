@@ -1,5 +1,6 @@
 #include "pdo.h"
 #include "cia402.h"
+#include "sdo.h"
 
 namespace {
 
@@ -38,40 +39,34 @@ constexpr uint8 count_of(const pdo_entry_t (&)[N]) {
 
 } // namespace
 
-int pdo_write_mapping(uint16 slave, uint16 pdo_index, uint16 assign_index,
-                      const pdo_entry_t *entries, uint8 count) {
-    int retval = 0;
-
+bool pdo_write_mapping(uint16 slave, uint16 pdo_index, uint16 assign_index,
+                       const pdo_entry_t *entries, uint8 count) {
     // Clear the mapping object
-    uint8 zero_map = 0;
-    retval += ec_SDOwrite(slave, pdo_index, 0x00, FALSE, sizeof(zero_map), &zero_map, EC_TIMEOUTSAFE);
+    if (!sdo_write_value<uint8>(slave, pdo_index, 0x00, 0)) return false;
 
     // Write each mapped object as 0xIIIISSLL (index, subindex, bit length)
     for (uint8 i = 0; i < count; i++) {
         uint32 map_object = ((uint32)entries[i].index << 16) |
                             ((uint32)entries[i].subindex << 8) |
                             entries[i].bit_length;
-        retval += ec_SDOwrite(slave, pdo_index, i + 1, FALSE, sizeof(map_object), &map_object, EC_TIMEOUTSAFE);
+        if (!sdo_write_value<uint32>(slave, pdo_index, i + 1, map_object)) return false;
     }
 
     // Set number of mapped objects
-    retval += ec_SDOwrite(slave, pdo_index, 0x00, FALSE, sizeof(count), &count, EC_TIMEOUTSAFE);
+    if (!sdo_write_value<uint8>(slave, pdo_index, 0x00, count)) return false;
 
     // Assign the mapping object to the sync manager
-    uint16 assign_val = 0x0000;
-    retval += ec_SDOwrite(slave, assign_index, 0x00, FALSE, sizeof(assign_val), &assign_val, EC_TIMEOUTSAFE);
-    assign_val = pdo_index;
-    retval += ec_SDOwrite(slave, assign_index, 0x01, FALSE, sizeof(assign_val), &assign_val, EC_TIMEOUTSAFE);
-    assign_val = 0x0001;
-    retval += ec_SDOwrite(slave, assign_index, 0x00, FALSE, sizeof(assign_val), &assign_val, EC_TIMEOUTSAFE);
+    if (!sdo_write_value<uint16>(slave, assign_index, 0x00, 0x0000)) return false;
+    if (!sdo_write_value<uint16>(slave, assign_index, 0x01, pdo_index)) return false;
+    if (!sdo_write_value<uint16>(slave, assign_index, 0x00, 0x0001)) return false;
 
-    return retval;
+    return true;
 }
 
-int pdo_map_csv_rxpdo(uint16 slave) {
+bool pdo_map_csv_rxpdo(uint16 slave) {
     return pdo_write_mapping(slave, 0x1600, 0x1C12, CSV_RXPDO, count_of(CSV_RXPDO));
 }
 
-int pdo_map_csv_txpdo(uint16 slave) {
+bool pdo_map_csv_txpdo(uint16 slave) {
     return pdo_write_mapping(slave, 0x1A00, 0x1C13, CSV_TXPDO, count_of(CSV_TXPDO));
 }

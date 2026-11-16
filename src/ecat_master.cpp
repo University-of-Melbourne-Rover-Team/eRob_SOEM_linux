@@ -4,6 +4,7 @@
 #include "cia402.h"
 #include "config.h"
 #include "pdo.h"
+#include "sdo.h"
 
 int expectedWKC = 0;
 volatile int wkc = 0;
@@ -36,52 +37,51 @@ bool ecat_init(const char *if_name) {
 }
 
 bool ecat_request_preop() {
-    ec_readstate();
+    // Broadcast the PRE-OP request to all slaves
+    ec_slave[0].state = EC_STATE_PRE_OP;
+    ec_writestate(0);
+    if (ec_statecheck(0, EC_STATE_PRE_OP, 3 * EC_TIMEOUTSTATE) == EC_STATE_PRE_OP) {
+        printf("LOG: All slaves in PRE_OP\n");
+        return true;
+    }
 
-    // TODO(step 4): request PRE-OP once for all slaves, then check each slave
+    // Report every slave that did not reach PRE-OP
+    ec_readstate();
     for (int i = 1; i <= ec_slavecount; i++) {
         if (ec_slave[i].state != EC_STATE_PRE_OP) {
-            printf("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s\n",
+            printf("ERROR: Slave %d not in PRE_OP: state 0x%02x, AL 0x%04x: %s\n",
                    i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
-            printf("Request init state for slave %d\n", i);
-            ec_slave[i].state = EC_STATE_INIT;
-        } else {
-            ec_slave[0].state = EC_STATE_PRE_OP;
-            ec_writestate(0);
-            if (ec_statecheck(0, EC_STATE_PRE_OP, 3 * EC_TIMEOUTSTATE) == EC_STATE_PRE_OP) {
-                printf("State changed to EC_STATE_PRE_OP: %d\n", EC_STATE_PRE_OP);
-            } else {
-                printf("State EC_STATE_PRE_OP cannot be changed\n");
-                return false;
-            }
         }
     }
-    return true;
+    return false;
 }
 
 bool ecat_map_pdos() {
-    // TODO(step 4): check each SDO write succeeded instead of the sum being non-negative
-    int retval = 0;
-    for (int i = 1; i <= ec_slavecount; i++) {
-        retval += pdo_map_csv_rxpdo(i);
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        if (!pdo_map_csv_rxpdo(slave)) {
+            printf("ERROR: Slave %d RXPDO mapping failed\n", slave);
+            return false;
+        }
+        if (!pdo_map_csv_txpdo(slave)) {
+            printf("ERROR: Slave %d TXPDO mapping failed\n", slave);
+            return false;
+        }
     }
-    printf("RXPDO mapping configuration result: %d\n", retval);
-    if (retval < 0) {
-        printf("Error: RXPDO mapping failed\n");
-        return false;
-    }
-
-    retval = 0;
-    for (int i = 1; i <= ec_slavecount; i++) {
-        retval += pdo_map_csv_txpdo(i);
-    }
-    printf("TXPDO mapping configuration result: %d\n", retval);
-    if (retval < 0) {
-        printf("Error: TXPDO mapping failed\n");
-        return false;
-    }
-
     printf("LOG: PDO mapping set successfully\n");
+    return true;
+}
+
+bool ecat_configure_drives() {
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        bool ok = sdo_write_value<int32_t>(slave, INDEX_MAX_VELOCITY, 0x00, config::MAX_VELOCITY) &&
+                  sdo_write_value<int32_t>(slave, INDEX_MAX_ACCELERATION, 0x00, config::MAX_ACCELERATION) &&
+                  sdo_write_value<int32_t>(slave, INDEX_QUICK_STOP_DECEL, 0x00, config::QUICK_STOP_DECEL);
+        if (!ok) {
+            printf("ERROR: Slave %d drive parameter configuration failed\n", slave);
+            return false;
+        }
+    }
+    printf("LOG: Drive parameters set successfully\n");
     return true;
 }
 
@@ -203,35 +203,6 @@ bool ecat_request_op() {
     bool all_in_op = (ec_slave[0].state == EC_STATE_OPERATIONAL);
     inOP = all_in_op;
     return all_in_op;
-}
-
-void ecat_configure_drives() {
-    // TODO(step 4): move these writes to PRE-OP, before the RT thread enables the drives.
-    // Control word and operation mode are PDO mapped, so these SDO writes are overwritten by the PDO.
-    uint8 operation_mode = config::OPERATION_MODE;
-    uint16_t control_word = 0x0000;
-    int32_t max_velocity = config::MAX_VELOCITY;
-    int32_t max_acceleration = config::MAX_ACCELERATION;
-    int32_t quick_stop_decel = config::QUICK_STOP_DECEL;
-
-    for (int i = 1; i <= ec_slavecount; i++) {
-        ec_SDOwrite(i, INDEX_CONTROL_WORD, 0x00, FALSE, sizeof(control_word), &control_word, EC_TIMEOUTSAFE);
-        osal_usleep(100000);
-
-        ec_SDOwrite(i, INDEX_OP_MODE, 0x00, FALSE, sizeof(operation_mode), &operation_mode, EC_TIMEOUTSAFE);
-        osal_usleep(100000);
-
-        ec_SDOwrite(i, INDEX_MAX_VELOCITY, 0x00, FALSE, sizeof(max_velocity), &max_velocity, EC_TIMEOUTSAFE);
-        ec_SDOwrite(i, INDEX_MAX_ACCELERATION, 0x00, FALSE, sizeof(max_acceleration), &max_acceleration, EC_TIMEOUTSAFE);
-        ec_SDOwrite(i, INDEX_QUICK_STOP_DECEL, 0x00, FALSE, sizeof(quick_stop_decel), &quick_stop_decel, EC_TIMEOUTSAFE);
-        osal_usleep(100000);
-
-        uint8 actual_mode;
-        int size = sizeof(actual_mode);
-        if (ec_SDOread(i, INDEX_OP_MODE_DISPLAY, 0x00, FALSE, &size, &actual_mode, EC_TIMEOUTSAFE) > 0) {
-            printf("Slave %d actual operation mode: %d\n", i, actual_mode);
-        }
-    }
 }
 
 void ecat_shutdown() {

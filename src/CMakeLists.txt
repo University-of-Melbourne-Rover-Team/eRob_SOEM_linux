@@ -4,6 +4,7 @@ add_executable(main
     ecat_master.cpp
     ecat_rt.cpp
     pdo.cpp
+    sdo.cpp
     rt_utils.cpp
 )
 target_link_libraries(main PRIVATE cia402 soem Threads::Threads)
