@@ -18,14 +18,14 @@ bool ecat_init(const char *if_name) {
         printf("No socket connection on Ethernet port. Execute as root.\n");
         return false;
     }
-    printf("EtherCAT master initialized successfully on %s.\n", if_name);
+    printf("LOG: EtherCAT master initialized successfully on %s.\n", if_name);
 
     if (ec_config_init(FALSE) <= 0) {
         printf("Error: Cannot find EtherCAT slaves! Nooooo!\n");
         ec_close();
         return false;
     }
-    printf("%d slaves found and configured.\n", ec_slavecount);
+    printf("LOG: %d slaves found and configured.\n", ec_slavecount);
 
     if (ec_slavecount > config::MAX_MOTORS) {
         printf("Error: %d slaves found, maximum supported is %d\n", ec_slavecount, config::MAX_MOTORS);
@@ -67,7 +67,7 @@ bool ecat_map_pdos() {
     }
     printf("RXPDO mapping configuration result: %d\n", retval);
     if (retval < 0) {
-        printf("RXPDO mapping failed\n");
+        printf("Error: RXPDO mapping failed\n");
         return false;
     }
 
@@ -77,11 +77,11 @@ bool ecat_map_pdos() {
     }
     printf("TXPDO mapping configuration result: %d\n", retval);
     if (retval < 0) {
-        printf("TXPDO mapping failed\n");
+        printf("Error: TXPDO mapping failed\n");
         return false;
     }
 
-    printf("PDO mapping set successfully\n");
+    printf("LOG: PDO mapping set successfully\n");
     return true;
 }
 
@@ -90,7 +90,7 @@ bool ecat_config_map_and_dc() {
     osal_usleep(1000000);
 
     for (int i = 1; i <= ec_slavecount; i++) {
-        printf("Slave %d: Name %s, Type %d, Address 0x%02x, State %d\n",
+        printf("LOG: Slave %d: Name %s, Type %d, Address 0x%02x, State %d\n",
                i, ec_slave[i].name, ec_slave[i].eep_id, ec_slave[i].configadr, ec_slave[i].state);
     }
 
@@ -118,16 +118,16 @@ bool ecat_config_map_and_dc() {
     osal_usleep(200000); // wait for DC configuration to take effect
 
     for (int i = 1; i <= ec_slavecount; i++) {
-        printf("Slave %d DC status: 0x%4.4x\n", i, ec_slave[i].DCactive);
+        printf("LOG: Slave %d DC status: 0x%4.4x\n", i, ec_slave[i].DCactive);
         if (ec_slave[i].hasdc && !ec_slave[i].DCactive) {
-            printf("DC not active for slave %d\n", i);
+            printf("WARNING: DC not active for slave %d\n", i);
         }
     }
     return true;
 }
 
 bool ecat_request_safeop() {
-    printf("Requesting SAFE_OP state...\n");
+    printf("LOG: Requesting SAFE_OP state...\n");
     ec_slave[0].state = EC_STATE_SAFE_OP;
     ec_writestate(0);
     osal_usleep(200000);
@@ -148,10 +148,10 @@ bool ecat_request_safeop() {
         printf("Failed to reach SAFE_OP state\n");
         return false;
     }
-    printf("Successfully reached SAFE_OP state\n");
+    printf("LOG: Successfully reached SAFE_OP state\n");
 
     expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-    printf("Calculated workcounter %d\n", expectedWKC);
+    printf("LOG: Calculated workcounter %d\n", expectedWKC);
 
     ec_readstate();
     for (int i = 1; i <= ec_slavecount; i++) {
@@ -184,7 +184,7 @@ bool ecat_request_op() {
     ec_writestate(0);
 
     if (ec_statecheck(0, EC_STATE_OPERATIONAL, 5 * EC_TIMEOUTSTATE) == EC_STATE_OPERATIONAL) {
-        printf("State changed to EC_STATE_OPERATIONAL: %d\n", EC_STATE_OPERATIONAL);
+        printf("LOG: State changed to EC_STATE_OPERATIONAL: %d\n", EC_STATE_OPERATIONAL);
     } else {
         printf("State could not be changed to EC_STATE_OPERATIONAL\n");
         for (int i = 1; i <= ec_slavecount; i++) {

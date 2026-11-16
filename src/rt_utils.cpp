@@ -50,7 +50,7 @@ bool rt_thread_create(pthread_t *thread, const char *name, int priority, size_t 
     }
 
     pthread_setname_np(*thread, name);
-    printf("Thread %s started (SCHED_FIFO %d)\n", name, priority);
+    printf("LOG: Thread %s started (SCHED_FIFO %d)\n", name, priority);
     return true;
 }
 

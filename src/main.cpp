@@ -31,7 +31,7 @@ static int run(const char *if_name) {
     osal_usleep(1000000);
 
     if (ecat_request_op()) {
-        printf("Operational state reached for all slaves.\n");
+        printf("LOG: Operational state reached for all slaves.\n");
         ecat_configure_drives();
 
         // TODO(step 4): replace with signal-driven shutdown

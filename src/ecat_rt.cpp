@@ -263,10 +263,10 @@ void *ecatcheck(void *ptr) {
         // check slave states after a persistent WKC error, or while slave not in OP
         if (consecutive_errors < config::WKC_ERROR_THRESHOLD && !ec_group[currentgroup].docheckstate) {
             // bus healthy
-            if (current_wkc >= expectedWKC && ++healthy_polls % 100 == 0) {
-                printf("OK: Bus healthy (WKC %d%d, %d slaves in OP)\n",
-                current_wkc, expectedWKC, ec_slavecount);
-            }
+            // if (current_wkc >= expectedWKC && ++healthy_polls % 100 == 0) {
+            //     printf("OK: Bus healthy (WKC %d%d, %d slaves in OP)\n",
+            //     current_wkc, expectedWKC, ec_slavecount);
+            // }
             continue;
         }
         healthy_polls = 0;
