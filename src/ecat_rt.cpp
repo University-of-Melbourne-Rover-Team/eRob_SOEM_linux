@@ -151,7 +151,7 @@ void *ecatthread(void *ptr) {
         update_motors();
 
         if (cycle_count % config::TELEMETRY_PRINT_INTERVAL == 0) {
-            // print_motors();
+            print_motors();
         }
 
         // clock synchronisation
