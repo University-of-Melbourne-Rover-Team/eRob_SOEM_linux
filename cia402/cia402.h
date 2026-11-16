@@ -106,7 +106,7 @@ typedef struct {
     uint32_t step;  // state machine control variable
     bool faulted;   // true if in fault state
     bool operation_enabled; // true if in operation enable state
-    bool ec_connected; // true if ethercat comms are working
+    bool ec_connected; // true if slave is in OP and exchanging process data
 } cia402_motor_t;
 
 /**

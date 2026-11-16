@@ -34,6 +34,11 @@ constexpr int THREAD_STACK_SIZE = 128 * 1024;
 // Slave state monitoring timeout used by the check thread (us)
 constexpr int EC_TIMEOUTMON = 5000;
 
+// ecat check thread config
+constexpr int CHECK_PERIOD_US = 10000;  // polling period
+constexpr int WKC_ERROR_THRESHOLD = 5;  // wkc error counts before slave states are checked
+constexpr int WKC_REPORT_INTERVAL = 100; // wkc error warning interval
+
 // Drive parameters
 constexpr int8_t OPERATION_MODE = MODE_CSV;
 constexpr int32_t MAX_VELOCITY = 30000;

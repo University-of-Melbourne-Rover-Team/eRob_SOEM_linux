@@ -1,5 +1,6 @@
 #include "ecat_rt.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -20,6 +21,9 @@ int cycle_time_us_param;
 // Motor state, index 0 unused so motors[i] matches ec_slave[i]
 cia402_motor_t motors[config::MAX_MOTORS + 1];
 
+// per-slave OP status, true = slave in OP
+std::atomic<bool> slave_in_op[config::MAX_MOTORS + 1];
+
 /**
  * Updates connection state, CiA 402 state machine and targets for every motor (one RT cycle)
  */
@@ -28,10 +32,9 @@ void update_motors() {
      * Check the connection status of each slave on the bus using working counter
      * Each slave expected to increment working counter 3 times each
      * i.e. 10 slaves --> wkc == 30
-     * TODO(step 3): WKC is a bus total, it cannot identify which slave dropped
      */
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        bool slave_connected = (wkc >= (slave * 3));
+        bool slave_connected = slave_in_op[slave].load(std::memory_order_relaxed);
         // motor just disconnected (falling edge)
         if (motors[slave].ec_connected && !slave_connected) {
             cia402_lost_motor(&motors[slave]);
@@ -148,7 +151,7 @@ void *ecatthread(void *ptr) {
         update_motors();
 
         if (cycle_count % config::TELEMETRY_PRINT_INTERVAL == 0) {
-            print_motors();
+            // print_motors();
         }
 
         // clock synchronisation
@@ -170,74 +173,151 @@ void *ecatthread(void *ptr) {
 }
 
 /**
- * EtherCAT check thread
- * Monitors slave states and attempts to recover slaves that are not operational
+ * Recover slave that has fallen out of OP state
+ * @param {int} slave, {bool} report: print the action only when the slave state changed
  */
-void *ecatcheck(void *ptr) {
-    (void)ptr;
-    int consecutive_errors = 0;
-    const int MAX_CONSECUTIVE_ERRORS = 5;
-
-    while (1) {
-        if (inOP && ((wkc < expectedWKC) || ec_group[currentgroup].docheckstate)) {
-            if (wkc < expectedWKC) {
-                consecutive_errors++;
-                printf("WARNING: Working counter error (%d/%d), consecutive errors: %d\n",
-                       wkc, expectedWKC, consecutive_errors);
-            } else {
-                consecutive_errors = 0;
-            }
-
-            // TODO(step 3): docheckstate is cleared straight after being set below
-            if (consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
-                printf("ERROR: Too many consecutive errors, attempting recovery...\n");
-                ec_group[currentgroup].docheckstate = TRUE;
-                consecutive_errors = 0;
-            }
-
-            ec_group[currentgroup].docheckstate = FALSE;
-            ec_readstate();
-            for (int slave = 1; slave <= ec_slavecount; slave++) {
-                if ((ec_slave[slave].group == currentgroup) && (ec_slave[slave].state != EC_STATE_OPERATIONAL)) {
-                    ec_group[currentgroup].docheckstate = TRUE;
-                    if (ec_slave[slave].state == (EC_STATE_SAFE_OP + EC_STATE_ERROR)) {
-                        printf("ERROR: Slave %d is in SAFE_OP + ERROR, attempting ack.\n", slave);
-                        ec_slave[slave].state = (EC_STATE_SAFE_OP + EC_STATE_ACK);
-                        ec_writestate(slave);
-                    } else if (ec_slave[slave].state == EC_STATE_SAFE_OP) {
-                        printf("WARNING: Slave %d is in SAFE_OP, changing to OPERATIONAL.\n", slave);
-                        ec_slave[slave].state = EC_STATE_OPERATIONAL;
-                        ec_writestate(slave);
-                    } else if (ec_slave[slave].state > EC_STATE_NONE) {
-                        if (ec_reconfig_slave(slave, config::EC_TIMEOUTMON)) {
-                            ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE: Slave %d reconfigured\n", slave);
-                        }
-                    } else if (!ec_slave[slave].islost) {
-                        ec_statecheck(slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET);
-                        if (!ec_slave[slave].state) {
-                            ec_slave[slave].islost = TRUE;
-                            printf("ERROR: Slave %d lost\n", slave);
-                        }
-                    }
-                }
-                if (ec_slave[slave].islost) {
-                    if (!ec_slave[slave].state) {
-                        if (ec_recover_slave(slave, config::EC_TIMEOUTMON)) {
-                            ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE: Slave %d recovered\n", slave);
-                        }
-                    } else {
-                        ec_slave[slave].islost = FALSE;
-                        printf("MESSAGE: Slave %d found\n", slave);
-                    }
-                }
-            }
-            if (!ec_group[currentgroup].docheckstate) {
-                printf("OK: All slaves resumed OPERATIONAL.\n");
+void recover_slave(int slave, bool report) {
+    if (ec_slave[slave].state == (EC_STATE_SAFE_OP + EC_STATE_ERROR)) {
+        if (report) {
+            printf("ERROR: Slave %d is in SAFE_OP + ERROR, attempting ack.\n", slave);
+        }
+        ec_slave[slave].state = (EC_STATE_SAFE_OP + EC_STATE_ACK);
+        ec_writestate(slave);
+    }
+    else if (ec_slave[slave].state == EC_STATE_SAFE_OP) {
+        if (report) {
+            printf("WARNING: Slave %d is in SAFE_OP, changing to OPERATIONAL.\n", slave);
+        }
+        ec_slave[slave].state = EC_STATE_OPERATIONAL;
+        ec_writestate(slave);
+    }
+    else if (ec_slave[slave].state > EC_STATE_NONE) {
+        if (ec_reconfig_slave(slave, config::EC_TIMEOUTMON)) {
+            ec_slave[slave].islost = FALSE;
+            if (report) {
+                printf("MESSAGE: Slave %d reconfigured\n", slave);
             }
         }
-        osal_usleep(10000);
+    }
+    else if (!ec_slave[slave].islost) {
+        ec_statecheck(slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET);
+        if (!ec_slave[slave].state) {
+            ec_slave[slave].islost = TRUE;
+            printf("ERROR: Slave %d lost\n", slave);
+        }
+    }
+}
+
+/**
+ * EtherCAT bus check thread
+ * Monitors working counter and slave states, publishes slave OP status to RT thread
+ * attempts to recover slaves that are not operational
+ */
+void *ecatcheck(void *ptr) {
+    (void) ptr;
+    const int CHECK_PERIOD_MS = config::CHECK_PERIOD_US / 1000;
+    int consecutive_errors = 0;
+    int healthy_polls = 0;
+    bool monitoring = false;
+    uint16_t last_state[config::MAX_MOTORS + 1] = {};
+
+    while (1) {
+        osal_usleep(config::CHECK_PERIOD_US);
+
+        // wait for bus to reach OP
+        if (!inOP) {
+            monitoring = false;
+            continue;
+        }
+
+        // bus just reached OP
+        if (!monitoring) {
+            for (int slave = 1; slave <= ec_slavecount; slave++) {
+                last_state[slave] = EC_STATE_OPERATIONAL;
+                slave_in_op[slave] = true;
+            }
+            consecutive_errors = 0;
+            monitoring = true;
+        }
+
+        // monitor working counter
+        int current_wkc = wkc;
+        if (current_wkc < expectedWKC) {
+            consecutive_errors++;
+
+            if (consecutive_errors == config::WKC_ERROR_THRESHOLD || 
+                (consecutive_errors > config::WKC_ERROR_THRESHOLD &&
+                consecutive_errors % config::WKC_REPORT_INTERVAL == 0)) {
+                printf("WARNING: Working counter error (%d%d) for %d ms\n",
+                current_wkc, expectedWKC, consecutive_errors * CHECK_PERIOD_MS);
+            }
+        }
+        else {
+            if (consecutive_errors >= config::WKC_ERROR_THRESHOLD) {
+                printf("OK: Working counter restored (%d%d) after %d ms\n",
+                current_wkc, expectedWKC, consecutive_errors * CHECK_PERIOD_MS);
+            }
+            consecutive_errors = 0;
+        }
+
+        // check slave states after a persistent WKC error, or while slave not in OP
+        if (consecutive_errors < config::WKC_ERROR_THRESHOLD && !ec_group[currentgroup].docheckstate) {
+            // bus healthy
+            if (current_wkc >= expectedWKC && ++healthy_polls % 100 == 0) {
+                printf("OK: Bus healthy (WKC %d%d, %d slaves in OP)\n",
+                current_wkc, expectedWKC, ec_slavecount);
+            }
+            continue;
+        }
+        healthy_polls = 0;
+
+        bool any_out_before = ec_group[currentgroup].docheckstate;
+        ec_group[currentgroup].docheckstate = FALSE;
+        ec_readstate();
+
+        for (int slave = 1; slave <= ec_slavecount; slave++) {
+            if (ec_slave[slave].group != currentgroup) {
+                continue;
+            }
+
+            uint16_t state = ec_slave[slave].state;
+            bool in_op = (state == EC_STATE_OPERATIONAL);
+            bool state_changed = (state != last_state[slave]);
+            last_state[slave] = state;
+
+            // publish OP status to RT thread, report transitions
+            if (slave_in_op[slave] && !in_op) {
+                printf("ERROR: Slave %d left OP: state 0x%02x, AL 0x%04x: %s\n",
+                slave, state, ec_slave[slave].ALstatuscode,
+                ec_ALstatuscode2string(ec_slave[slave].ALstatuscode));
+            }
+            else if (!slave_in_op[slave] && in_op) {
+                printf("OK: Slave %d back in OP\n", slave);
+            }
+            slave_in_op[slave] = in_op;
+
+            if (!in_op) {
+                ec_group[currentgroup].docheckstate = TRUE;
+                recover_slave(slave, state_changed);
+            }
+
+            if (ec_slave[slave].islost) {
+                if (!ec_slave[slave].state) {
+                    if (ec_recover_slave(slave, config::EC_TIMEOUTMON)) {
+                        ec_slave[slave].islost = FALSE;
+                        printf("MESSAGE: Slave %d recovered\n", slave);
+                    }
+                }
+                else {
+                    ec_slave[slave].islost = FALSE;
+                    printf("MESSAGE: Slave %d found\n", slave);
+                }
+            }
+        }
+
+        if (any_out_before && !ec_group[currentgroup].docheckstate) {
+            printf("OK: All slaves resumed operational\n");
+        }
     }
 }
 
