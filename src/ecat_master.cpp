@@ -58,11 +58,11 @@ bool ecat_request_preop() {
 
 bool ecat_map_pdos() {
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        if (!pdo_map_csv_rxpdo(slave)) {
+        if (!pdo_map_rxpdo(slave)) {
             printf("ERROR: Slave %d RXPDO mapping failed\n", slave);
             return false;
         }
-        if (!pdo_map_csv_txpdo(slave)) {
+        if (!pdo_map_txpdo(slave)) {
             printf("ERROR: Slave %d TXPDO mapping failed\n", slave);
             return false;
         }

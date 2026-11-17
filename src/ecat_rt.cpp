@@ -77,11 +77,12 @@ void update_motors() {
 void print_motors() {
     printf("WKC: %d | expected WKC: %d\n", wkc, expectedWKC);
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+        printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%d, vel=%d, target_pos=%d, target_vel=%d, mode=%d, fault=%d, op_en=%d, ec_connected=%d\n", slave,
                motors[slave].txpdo.statusword,
                motors[slave].rxpdo.controlword,
                motors[slave].txpdo.actual_position,
                motors[slave].txpdo.actual_velocity,
+               motors[slave].rxpdo.target_position,
                motors[slave].rxpdo.target_velocity,
                motors[slave].rxpdo.mode_of_operation,
                motors[slave].faulted,
@@ -217,7 +218,7 @@ void *ecatcheck(void *ptr) {
     (void) ptr;
     const int CHECK_PERIOD_MS = config::CHECK_PERIOD_US / 1000;
     int consecutive_errors = 0;
-    int healthy_polls = 0;
+    // int healthy_polls = 0;
     bool monitoring = false;
     uint16_t last_state[config::MAX_MOTORS + 1] = {};
 
@@ -269,7 +270,7 @@ void *ecatcheck(void *ptr) {
             // }
             continue;
         }
-        healthy_polls = 0;
+        // healthy_polls = 0;
 
         bool any_out_before = ec_group[currentgroup].docheckstate;
         ec_group[currentgroup].docheckstate = FALSE;

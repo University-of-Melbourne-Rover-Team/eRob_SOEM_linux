@@ -30,7 +30,7 @@ bool ecat_init(const char *if_name);
 bool ecat_request_preop();
 
 /**
- * Writes the CSV RXPDO and TXPDO mappings to all slaves (step 3)
+ * Writes the RXPDO and TXPDO mappings to all slaves
  * @return {bool}: false if any SDO write failed
  */
 bool ecat_map_pdos();

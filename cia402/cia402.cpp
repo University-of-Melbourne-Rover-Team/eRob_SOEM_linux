@@ -66,6 +66,7 @@ void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation) {
     // initialise RXPDO
     motor->rxpdo.controlword = CW_FAULT_RESET_CMD;
     motor->rxpdo.mode_of_operation = mode_of_operation;
+    motor->rxpdo.target_position = 0; // todo: track actual position until op enabled
     motor->rxpdo.target_velocity = 0;
     motor->rxpdo.padding = 0;
 
@@ -80,6 +81,7 @@ void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation) {
 void cia402_lost_motor(cia402_motor_t *motor) {
     // reset RXPDO
     motor->rxpdo.controlword = 0x0000;  // safe control word
+    motor->rxpdo.target_position = 0; // todo: track actual position until op enabled
     motor->rxpdo.target_velocity = 0;
     motor->rxpdo.padding = 0;
 

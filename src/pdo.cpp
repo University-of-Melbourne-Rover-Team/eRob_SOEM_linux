@@ -5,19 +5,23 @@
 namespace {
 
 // RXPDO: control data sent to slave, must match rxpdo_t
-constexpr pdo_entry_t CSV_RXPDO[] = {
+// supported modes: CSV, CSP
+constexpr pdo_entry_t RXPDO[] = {
     {INDEX_CONTROL_WORD,    0x00, 16},
+    {INDEX_TARGET_POSITION, 0x00, 32},
     {INDEX_TARGET_VELOCITY, 0x00, 32},
     {INDEX_OP_MODE,         0x00, 8},
     {0x0000,                0x00, 8},   // padding
 };
 
 // TXPDO: status data received from slave, must match txpdo_t
-constexpr pdo_entry_t CSV_TXPDO[] = {
+constexpr pdo_entry_t TXPDO[] = {
     {INDEX_STATUS_WORD,     0x00, 16},
     {INDEX_ACTUAL_POSITION, 0x00, 32},
     {INDEX_ACTUAL_VELOCITY, 0x00, 32},
-    {0x6077,                0x00, 16},  // actual torque
+    {INDEX_ACTUAL_TORQUE,   0x00, 16},
+    {INDEX_OP_MODE_DISPLAY, 0x00, 8},
+    {0x0000,                0x00, 8},   // padding
 };
 
 template <size_t N>
@@ -29,8 +33,8 @@ constexpr size_t pdo_bytes(const pdo_entry_t (&entries)[N]) {
     return bits / 8;
 }
 
-static_assert(pdo_bytes(CSV_RXPDO) == sizeof(rxpdo_t), "CSV RXPDO table does not match rxpdo_t");
-static_assert(pdo_bytes(CSV_TXPDO) == sizeof(txpdo_t), "CSV TXPDO table does not match txpdo_t");
+static_assert(pdo_bytes(RXPDO) == sizeof(rxpdo_t), "RXPDO table does not match rxpdo_t");
+static_assert(pdo_bytes(TXPDO) == sizeof(txpdo_t), "TXPDO table does not match txpdo_t");
 
 template <size_t N>
 constexpr uint8 count_of(const pdo_entry_t (&)[N]) {
@@ -63,10 +67,10 @@ bool pdo_write_mapping(uint16 slave, uint16 pdo_index, uint16 assign_index,
     return true;
 }
 
-bool pdo_map_csv_rxpdo(uint16 slave) {
-    return pdo_write_mapping(slave, 0x1600, 0x1C12, CSV_RXPDO, count_of(CSV_RXPDO));
+bool pdo_map_rxpdo(uint16 slave) {
+    return pdo_write_mapping(slave, 0x1600, 0x1C12, RXPDO, count_of(RXPDO));
 }
 
-bool pdo_map_csv_txpdo(uint16 slave) {
-    return pdo_write_mapping(slave, 0x1A00, 0x1C13, CSV_TXPDO, count_of(CSV_TXPDO));
+bool pdo_map_txpdo(uint16 slave) {
+    return pdo_write_mapping(slave, 0x1A00, 0x1C13, TXPDO, count_of(TXPDO));
 }

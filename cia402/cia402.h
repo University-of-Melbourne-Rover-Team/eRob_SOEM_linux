@@ -20,6 +20,7 @@
 #define INDEX_PROFILE_DECEL         0x6084U
 #define INDEX_QUICK_STOP_DECEL      0x6085U
 #define INDEX_MAX_ACCELERATION      0x60C5U
+#define INDEX_ACTUAL_TORQUE         0x6077U
 #define INDEX_ERROR_CODE            0x603FU
 
 // Mode of operation
@@ -86,8 +87,9 @@ typedef enum {
 // Structure for RXPDO (Control data sent to slave)
 typedef struct {
     uint16_t controlword;      // 0x6040:0, 16 bits
+    int32_t target_position;   // 0x607A:0, 32 bits, only used in CSP
     int32_t target_velocity;   // 0x60FF:0, 32 bits, only used in CSV, PV
-    uint8_t mode_of_operation; // 0x6060:0, 8 bits
+    int8_t mode_of_operation;  // 0x6060:0, 8 bits
     uint8_t padding;           // 8 bits padding for alignment
 } __attribute__((__packed__)) rxpdo_t;
 
@@ -97,6 +99,8 @@ typedef struct {
     int32_t actual_position;  // 0x6064:0, 32 bits
     int32_t actual_velocity;  // 0x606C:0, 32 bits
     int16_t actual_torque;    // 0x6077:0, 16 bits
+    int8_t mode_display;      // 0x6061:0, 8 bits, mode the drive is actually running
+    uint8_t padding;          // 8 bits padding for alignment
 } __attribute__((__packed__)) txpdo_t;
 
 typedef struct {
