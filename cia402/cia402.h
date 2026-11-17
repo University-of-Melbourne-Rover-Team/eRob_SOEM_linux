@@ -150,4 +150,22 @@ void cia402_lost_motor(cia402_motor_t *motor);
  */
 void cia402_state_machine(cia402_motor_t *motor);
 
+/**
+ * @param {int8_t} mode: cia 402 mode
+ * @return {char *} string: cia 402 mode as string
+ */
+const char* cia402_mode2string(int8_t mode);
+
+/**
+ * @param {int32_t} count: positions counts or velocity counts/s
+ * @return {float} angle in degrees
+ */
+float count2angle(int32_t count);
+
+/**
+ * @param {float} angle: angular position in degrees, or angular velocity in degrees/s
+ * @return {int32_t} counts
+ */
+int32_t angle2count(float angle);
+
 #endif

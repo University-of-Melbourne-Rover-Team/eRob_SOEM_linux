@@ -66,7 +66,7 @@ void cia402_init_motor(cia402_motor_t *motor, const int mode_of_operation) {
     // initialise RXPDO
     motor->rxpdo.controlword = CW_FAULT_RESET_CMD;
     motor->rxpdo.mode_of_operation = mode_of_operation;
-    motor->rxpdo.target_position = 0; // todo: track actual position until op enabled
+    motor->rxpdo.target_position = 0; // set to actual position until enabled
     motor->rxpdo.target_velocity = 0;
     motor->rxpdo.padding = 0;
 
@@ -175,4 +175,27 @@ void cia402_state_machine(cia402_motor_t *motor) {
     if (motor->step < 2000) {
         motor->step++;
     }
+}
+
+const char* cia402_mode2string(int8_t mode) {
+    switch (mode) {
+        case MODE_PROFILE_POSITION:
+            return "PP";
+        case MODE_PROFILE_VELOCITY:
+            return "PV";
+        case MODE_CSP:
+            return "CSP";
+        case MODE_CSV:
+            return "CSV";
+        default:
+            return "Unknown Mode";
+    }
+}
+
+float count2angle(int32_t count) {
+    return (float) ((count * 360) / (2<<18));
+}
+
+int32_t angle2count(float angle) {
+    return (int32_t) ((angle / 360) * (2<<18));
 }

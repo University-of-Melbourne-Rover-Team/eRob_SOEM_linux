@@ -38,6 +38,7 @@ void update_motors() {
         // motor just disconnected (falling edge)
         if (motors[slave].ec_connected && !slave_connected) {
             cia402_lost_motor(&motors[slave]);
+            memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
         }
         motors[slave].ec_connected = slave_connected;
     }
@@ -58,11 +59,23 @@ void update_motors() {
             printf("FAULT: Slave %d, SW=0x%04x\n", slave, motors[slave].txpdo.statusword);
         }
 
-        // set target velocities
-        if (motors[slave].operation_enabled) {
-            motors[slave].rxpdo.target_velocity = config::DEMO_TARGET_VELOCITY;
-        } else {
-            motors[slave].rxpdo.target_velocity = 0;
+        // set targets
+        cia402_motor_t &motor = motors[slave];
+        if (!motor.operation_enabled) {
+            motor.rxpdo.target_velocity = 0;
+            motor.rxpdo.target_position = motor.txpdo.actual_position;
+        }
+        else {
+            motor.rxpdo.target_velocity = config::DEMO_TARGET_VELOCITY;
+            motor.rxpdo.target_position = motor.txpdo.actual_position;
+        }
+
+        // set unused PDO values
+        if (motor.rxpdo.mode_of_operation == MODE_CSP) {
+            motor.rxpdo.target_velocity = 0;    // set velocity to 0 to ignore
+        }
+        if (motor.rxpdo.mode_of_operation == MODE_CSV) {
+            motor.rxpdo.target_position = motor.txpdo.actual_position;  // hold position
         }
 
         // copy RXPDO data from local array to SOEM array
@@ -77,14 +90,14 @@ void update_motors() {
 void print_motors() {
     printf("WKC: %d | expected WKC: %d\n", wkc, expectedWKC);
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%d, vel=%d, target_pos=%d, target_vel=%d, mode=%d, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+        printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_pos=%d, target_vel=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
                motors[slave].txpdo.statusword,
                motors[slave].rxpdo.controlword,
-               motors[slave].txpdo.actual_position,
-               motors[slave].txpdo.actual_velocity,
+               count2angle(motors[slave].txpdo.actual_position),
+               count2angle(motors[slave].txpdo.actual_velocity),
                motors[slave].rxpdo.target_position,
                motors[slave].rxpdo.target_velocity,
-               motors[slave].rxpdo.mode_of_operation,
+               cia402_mode2string(motors[slave].rxpdo.mode_of_operation),
                motors[slave].faulted,
                motors[slave].operation_enabled,
                motors[slave].ec_connected);
@@ -116,7 +129,7 @@ void *ecatthread(void *ptr) {
 
     // configure motors on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        cia402_init_motor(&motors[slave], config::OPERATION_MODE);
+        cia402_init_motor(&motors[slave], config::MOTOR_MODES[slave-1]);
     }
 
     // send initial RXPDO data
@@ -152,7 +165,7 @@ void *ecatthread(void *ptr) {
         update_motors();
 
         if (cycle_count % config::TELEMETRY_PRINT_INTERVAL == 0) {
-            // print_motors();
+            print_motors();
         }
 
         // clock synchronisation
