@@ -72,6 +72,9 @@
 #define SW_STATE_FAULT_REACTION_ACTIVE     0x000FU
 #define SW_STATE_FAULT                     0x0008U
 
+#define EROB_MULTITURN_RES                  (2 << 18)
+#define EROB_SINGLETURN_RES                 (2 << 18)
+
 typedef enum {
     NOT_READY_TO_SWITCH_ON = SW_STATE_NOT_READY_TO_SWITCH_ON,
     SW_ON_DISABLED = SW_STATE_SWITCH_ON_DISABLED,

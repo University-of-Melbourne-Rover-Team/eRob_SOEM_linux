@@ -193,9 +193,9 @@ const char* cia402_mode2string(int8_t mode) {
 }
 
 float count2angle(int32_t count) {
-    return (float) ((count * 360) / (2<<18));
+    return (float) ((count * 360) / EROB_MULTITURN_RES);
 }
 
 int32_t angle2count(float angle) {
-    return (int32_t) ((angle / 360) * (2<<18));
+    return (int32_t) ((angle / 360) * EROB_MULTITURN_RES);
 }
