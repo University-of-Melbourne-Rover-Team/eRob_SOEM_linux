@@ -11,6 +11,8 @@
 #include "config.h"
 #include "ecat_master.h"
 #include "rt_utils.h"
+#include "utils.h"
+#include "trajectory.h"
 
 namespace {
 
@@ -24,10 +26,14 @@ cia402_motor_t motors[config::MAX_MOTORS + 1];
 // per-slave OP status, true = slave in OP
 std::atomic<bool> slave_in_op[config::MAX_MOTORS + 1];
 
+// Cyclic sync position control data structures
+trajectory_t trajectories[config::MAX_MOTORS + 1];
+const trajectory_limits_t CSP_LIMITS = {config::CSP_MAX_VELOCITY, config::CSP_MAX_ACCELERATION};
+
 /**
  * Updates connection state, CiA 402 state machine and targets for every motor (one RT cycle)
  */
-void update_motors() {
+void update_motors(double cycle_time_s) {
     /**
      * Check the connection status of each slave on the bus using working counter
      * Each slave expected to increment working counter 3 times each
@@ -62,20 +68,17 @@ void update_motors() {
         // set targets
         cia402_motor_t &motor = motors[slave];
         if (!motor.operation_enabled) {
+            trajectory_reset(&trajectories[slave], motor.txpdo.actual_position);
             motor.rxpdo.target_velocity = 0;
             motor.rxpdo.target_position = motor.txpdo.actual_position;
         }
+        else if (motor.rxpdo.mode_of_operation == MODE_CSP) {
+            motor.rxpdo.target_position = trajectory_step(&trajectories[slave], &CSP_LIMITS, cycle_time_s);
+            motor.rxpdo.target_velocity = 0;    // unused in CSP
+        }
         else {
             motor.rxpdo.target_velocity = config::DEMO_TARGET_VELOCITY;
-            motor.rxpdo.target_position = motor.txpdo.actual_position;
-        }
-
-        // set unused PDO values
-        if (motor.rxpdo.mode_of_operation == MODE_CSP) {
-            motor.rxpdo.target_velocity = 0;    // set velocity to 0 to ignore
-        }
-        if (motor.rxpdo.mode_of_operation == MODE_CSV) {
-            motor.rxpdo.target_position = motor.txpdo.actual_position;  // hold position
+            motor.rxpdo.target_position = motor.txpdo.actual_position;  // unused in CSV
         }
 
         // copy RXPDO data from local array to SOEM array
@@ -162,7 +165,7 @@ void *ecatthread(void *ptr) {
         cycle_count++;
 
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        update_motors();
+        update_motors((double) cycletime);
 
         if (cycle_count % config::TELEMETRY_PRINT_INTERVAL == 0) {
             print_motors();

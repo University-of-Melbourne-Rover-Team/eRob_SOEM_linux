@@ -11,6 +11,7 @@
 #include <iterator>
 
 #include "cia402.h"
+#include "utils.h"
 
 namespace config {
 
@@ -65,6 +66,17 @@ static_assert(motor_modes_supported(), "MOTOR_MODES contain mode other than MODE
 constexpr int32_t MAX_VELOCITY = 30000;
 constexpr int32_t MAX_ACCELERATION = 30000;
 constexpr int32_t QUICK_STOP_DECEL = 30000;
+
+// CSP trajectory limits used by trajectory planner
+constexpr double CSP_MAX_VELOCITY_DEG = 10.0;       // deg/s
+constexpr double CSP_MAX_ACCELERATION_DEG = 10.0;   // deg/s^2
+constexpr double CSP_MAX_VELOCITY = CSP_MAX_VELOCITY_DEG / EROB_DEG_PER_COUNT;          // counts/s
+constexpr double CSP_MAX_ACCELERATION = CSP_MAX_ACCELERATION_DEG / EROB_DEG_PER_COUNT;  // counts/s^2
+
+static_assert(CSP_MAX_VELOCITY > 0 && CSP_MAX_VELOCITY <= MAX_VELOCITY,
+              "CSP_MAX_VELOCITY must be > 0 and <= drive MAX_VELOCITY");
+static_assert(CSP_MAX_ACCELERATION > 0 && CSP_MAX_ACCELERATION <= MAX_ACCELERATION,
+              "CSP_MAX_ACCELERATION must be > 0 and <= drive MAX_ACCELERATION");
 
 // target velocity for CSV motors
 constexpr int32_t DEMO_TARGET_VELOCITY = 0;

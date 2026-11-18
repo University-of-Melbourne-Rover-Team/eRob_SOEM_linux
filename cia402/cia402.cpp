@@ -1,7 +1,5 @@
 #include "cia402.h"
 
-#include <cmath>
-
 CIA402_STATE cia402_decode_state(uint16_t status_word) {
     uint16_t masked_status_word = status_word & SW_STATE_MASK;
     switch(masked_status_word) {
@@ -192,12 +190,4 @@ const char* cia402_mode2string(int8_t mode) {
         default:
             return "Unknown Mode";
     }
-}
-
-double count2angle(int32_t count) {
-    return count * EROB_DEG_PER_COUNT;
-}
-
-int32_t angle2count(double angle) {
-    return static_cast<int32_t>(std::lround(angle / EROB_DEG_PER_COUNT));
 }

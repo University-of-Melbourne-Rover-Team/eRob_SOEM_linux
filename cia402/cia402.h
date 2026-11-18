@@ -72,9 +72,6 @@
 #define SW_STATE_FAULT_REACTION_ACTIVE     0x000FU
 #define SW_STATE_FAULT                     0x0008U
 
-constexpr int32_t EROB_COUNTS_PER_REV = 1 << 19; // 19-bit encoder
-constexpr double EROB_DEG_PER_COUNT = 360.0 / EROB_COUNTS_PER_REV;
-
 typedef enum {
     NOT_READY_TO_SWITCH_ON = SW_STATE_NOT_READY_TO_SWITCH_ON,
     SW_ON_DISABLED = SW_STATE_SWITCH_ON_DISABLED,
@@ -158,19 +155,5 @@ void cia402_state_machine(cia402_motor_t *motor);
  * @return {char *} string: cia 402 mode as string
  */
 const char* cia402_mode2string(int8_t mode);
-
-/**
- * Converts encoder count to degrees
- * @param {int32_t} count: positions counts or velocity counts/s
- * @return {double} angle in degrees
- */
-double count2angle(int32_t count);
-
-/**
- * Converts degrees to encoder count, rounded to nearest count
- * @param {float} angle: angular position in degrees, or angular velocity in degrees/s
- * @return {int32_t} counts
- */
-int32_t angle2count(double angle);
 
 #endif
