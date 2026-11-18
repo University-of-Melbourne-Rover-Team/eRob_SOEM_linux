@@ -15,28 +15,29 @@
 
 namespace config {
 
-// EtherCAT network interface used when none is given on the command line (run `ip link`)
+/**
+ * EtherCAT Master configuration:
+ */
+
+// Default EtherCAT network interface (run ip link)
 constexpr const char *DEFAULT_IF_NAME = "enp89s0";  // if_name of NUC
 
 // EtherCAT cycle time; SYNC0 is configured with the same period
 constexpr int CYCLE_TIME_US = 1000; // PDO's exchanged periodically every 1000us = 1ms
-constexpr uint32_t SYNC0_CYCLE_NS = CYCLE_TIME_US * 1000;
+constexpr uint32_t SYNC0_CYCLE_NS = CYCLE_TIME_US * 1000; // cycle time of Sync 0 event
+// offset of Sync 0 event (i.e. Sync 0 event occurs 500us after Sync 0 trigger)
 constexpr int32_t SYNC0_SHIFT_NS = SYNC0_CYCLE_NS / 2;
-
-// Upper bound on slaves handled by the maindevice
-constexpr int MAX_MOTORS = 16;
 
 // Process real-time settings
 constexpr int PROCESS_CPU_CORES[] = {2, 3};
 
-// SCHED_FIFO policy thread priorities
+// Thread configuration (SCHED_FIFO policy)
 // 1-99, higher runs first. Main thread stays on SCHED_OTHER policy
 constexpr int RT_THREAD_PRIORITY = 90;  // real-time ethercat loop thread
 constexpr int CHECK_THREAD_PRIORITY = 20;   // ecat comms status check/recover thread
+constexpr int THREAD_STACK_SIZE = 128 * 1024; // Stack size for the RT and check threads
 
-// Stack size for the RT and check threads
-constexpr int THREAD_STACK_SIZE = 128 * 1024;
-
+// EtherCAT bus state monitoring thread config (ecat_check)
 // Slave state monitoring timeout used by the check thread (us)
 constexpr int EC_TIMEOUTMON = 5000;
 
@@ -45,8 +46,15 @@ constexpr int CHECK_PERIOD_US = 10000;  // polling period
 constexpr int WKC_ERROR_THRESHOLD = 5;  // wkc error counts before slave states are checked
 constexpr int WKC_REPORT_INTERVAL = 100; // wkc error warning interval
 
+
+/**
+ * EtherCAT Fieldbus configuration:
+ */
+
+// Maximum number of motors allowed on the bus
+constexpr int MAX_MOTORS = 16;
+
 // CiA 402 mode of operation for each motor in bus order (entry 0 = slave 1)
-// must list exactly one entry per slave on bus, otherwise program fails
 // MODE_CSV and MODE_CSP supported
 constexpr int8_t MOTOR_MODES[] = {MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSP, MODE_CSV};
 constexpr int NUM_MOTORS = static_cast<int>(std::size(MOTOR_MODES));
@@ -68,9 +76,9 @@ constexpr double MAX_VELOCITY_DEG = 60.0;   // deg/s
 constexpr double MAX_ACCELERATION_DEG = 60.0;   // deg/s^2
 constexpr double QUICK_STOP_DECEL_DEG = 60.0;   // deg/s^2
 
-constexpr int32_t MAX_VELOCITY = MAX_VELOCITY_DEG / EROB_DEG_PER_COUNT;
-constexpr int32_t MAX_ACCELERATION = MAX_ACCELERATION_DEG / EROB_DEG_PER_COUNT;
-constexpr int32_t QUICK_STOP_DECEL = QUICK_STOP_DECEL_DEG / EROB_DEG_PER_COUNT;
+constexpr int32_t MAX_VELOCITY = MAX_VELOCITY_DEG / EROB_DEG_PER_COUNT; // counts/s
+constexpr int32_t MAX_ACCELERATION = MAX_ACCELERATION_DEG / EROB_DEG_PER_COUNT; // counts/s^2
+constexpr int32_t QUICK_STOP_DECEL = QUICK_STOP_DECEL_DEG / EROB_DEG_PER_COUNT; // counts/s^2
 
 // CSP trapezoidal profile values used by trajectory planner
 constexpr double CSP_PROFILE_VELOCITY_DEG = 20.0;   // deg/s
