@@ -47,7 +47,7 @@ constexpr int WKC_REPORT_INTERVAL = 100; // wkc error warning interval
 // CiA 402 mode of operation for each motor in bus order (entry 0 = slave 1)
 // must list exactly one entry per slave on bus, otherwise program fails
 // MODE_CSV and MODE_CSP supported
-constexpr int8_t MOTOR_MODES[] = {MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV};
+constexpr int8_t MOTOR_MODES[] = {MODE_CSP};
 constexpr int NUM_MOTORS = static_cast<int>(std::size(MOTOR_MODES));
 
 constexpr bool motor_modes_supported() {
@@ -78,8 +78,9 @@ static_assert(CSP_MAX_VELOCITY > 0 && CSP_MAX_VELOCITY <= MAX_VELOCITY,
 static_assert(CSP_MAX_ACCELERATION > 0 && CSP_MAX_ACCELERATION <= MAX_ACCELERATION,
               "CSP_MAX_ACCELERATION must be > 0 and <= drive MAX_ACCELERATION");
 
-// target velocity for CSV motors
+// demo values
 constexpr int32_t DEMO_TARGET_VELOCITY = 0;
+constexpr double DEMO_TARGET_POSITION = 30.0;
 
 // Print TXPDO data every N cycles
 constexpr int TELEMETRY_PRINT_INTERVAL = 250;

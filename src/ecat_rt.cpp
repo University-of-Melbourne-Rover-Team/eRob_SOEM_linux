@@ -67,16 +67,22 @@ void update_motors(double cycle_time_s) {
 
         // set targets
         cia402_motor_t &motor = motors[slave];
+        trajectory_t &trajectory = trajectories[slave];
         if (!motor.operation_enabled) {
-            trajectory_reset(&trajectories[slave], motor.txpdo.actual_position);
+            trajectory_reset(&trajectory, motor.txpdo.actual_position);
             motor.rxpdo.target_velocity = 0;
             motor.rxpdo.target_position = motor.txpdo.actual_position;
         }
         else if (motor.rxpdo.mode_of_operation == MODE_CSP) {
-            motor.rxpdo.target_position = trajectory_step(&trajectories[slave], &CSP_LIMITS, cycle_time_s);
+            if (trajectory_goal_reached(&trajectory)) {
+                int32_t current_pos = trajectory.position;
+                int32_t target_pos = current_pos + angle2count(config::DEMO_TARGET_POSITION);
+                trajectory_set_goal(&trajectory, target_pos);
+            }
+            motor.rxpdo.target_position = trajectory_step(&trajectory, &CSP_LIMITS, cycle_time_s);
             motor.rxpdo.target_velocity = 0;    // unused in CSP
         }
-        else {
+        else if (motor.rxpdo.mode_of_operation == MODE_CSV) {
             motor.rxpdo.target_velocity = config::DEMO_TARGET_VELOCITY;
             motor.rxpdo.target_position = motor.txpdo.actual_position;  // unused in CSV
         }
@@ -93,17 +99,35 @@ void update_motors(double cycle_time_s) {
 void print_motors() {
     printf("WKC: %d | expected WKC: %d\n", wkc, expectedWKC);
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_pos=%d, target_vel=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+        
+        // CSV motor print
+        if (motors[slave].rxpdo.mode_of_operation == MODE_CSV) {
+            printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_vel=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
                motors[slave].txpdo.statusword,
                motors[slave].rxpdo.controlword,
                count2angle(motors[slave].txpdo.actual_position),
                count2angle(motors[slave].txpdo.actual_velocity),
-               motors[slave].rxpdo.target_position,
                motors[slave].rxpdo.target_velocity,
                cia402_mode2string(motors[slave].rxpdo.mode_of_operation),
                motors[slave].faulted,
                motors[slave].operation_enabled,
                motors[slave].ec_connected);
+        }
+
+        // CSP motor print
+        else if (motors[slave].rxpdo.mode_of_operation == MODE_CSP) {
+            printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_pos=%d, target_reached=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+               motors[slave].txpdo.statusword,
+               motors[slave].rxpdo.controlword,
+               count2angle(motors[slave].txpdo.actual_position),
+               count2angle(motors[slave].txpdo.actual_velocity),
+               trajectories[slave].goal,
+               trajectory_goal_reached(&trajectories[slave]),
+               cia402_mode2string(motors[slave].rxpdo.mode_of_operation),
+               motors[slave].faulted,
+               motors[slave].operation_enabled,
+               motors[slave].ec_connected);
+        }
     }
     printf("\n");
 }
