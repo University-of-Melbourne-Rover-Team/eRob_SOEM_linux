@@ -22,6 +22,7 @@
 #define INDEX_MAX_ACCELERATION      0x60C5U
 #define INDEX_ACTUAL_TORQUE         0x6077U
 #define INDEX_ERROR_CODE            0x603FU
+#define INDEX_ERROR_HISTORY         0x1003U // sub 1 = most recent error
 
 // Mode of operation
 #define MODE_PROFILE_POSITION       ((int8_t)1)

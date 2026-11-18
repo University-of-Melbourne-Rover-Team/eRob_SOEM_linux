@@ -1,5 +1,11 @@
 #include "cia402.h"
 
+// Fault reset timing (cycles): control word held at 0 first, so the master can read the error code
+// before the drive clears it, then fault reset (bit 7) is held high. Repeats while the fault persists,
+// giving bit 7 a fresh 0 -> 1 edge each attempt
+#define FAULT_RESET_LOW_CYCLES      200U
+#define FAULT_RESET_HIGH_CYCLES     100U
+
 CIA402_STATE cia402_decode_state(uint16_t status_word) {
     uint16_t masked_status_word = status_word & SW_STATE_MASK;
     switch(masked_status_word) {
@@ -96,6 +102,7 @@ void cia402_lost_motor(cia402_motor_t *motor) {
 void cia402_state_machine(cia402_motor_t *motor) {
 
     // get motor state from TXPDO status word
+    const CIA402_STATE previous_state = motor->state;
     motor->state = cia402_decode_state(motor->txpdo.statusword);
 
     // check for unknown state
@@ -120,16 +127,21 @@ void cia402_state_machine(cia402_motor_t *motor) {
      * Assign control word and state variables based on state
      */
 
-    // not ready to switch on || fault state: send Fault reset command
+    // not ready to switch on || fault state: send Fault reset command on a rising edge of bit 7
     if (((motor->state == NOT_READY_TO_SWITCH_ON) || (motor->state == FAULT))) {
         motor->faulted = true;
         motor->operation_enabled = false;
-        motor->rxpdo.controlword = CW_FAULT_RESET_CMD;
-        motor->step = 0;    // reset state machine progression
 
-        /**
-         * TO DO: Implement fault reset rising edge
-         */
+        // just entered this state: restart the reset sequence
+        if (previous_state != NOT_READY_TO_SWITCH_ON && previous_state != FAULT) {
+            motor->step = 0;
+        }
+        // reset not accepted (fault still present): start another attempt
+        if (motor->step >= FAULT_RESET_LOW_CYCLES + FAULT_RESET_HIGH_CYCLES) {
+            motor->step = 0;
+        }
+
+        motor->rxpdo.controlword = (motor->step < FAULT_RESET_LOW_CYCLES) ? 0x0000U : CW_FAULT_RESET_CMD;
     }
 
     // switch on disabled state: send shutdown command

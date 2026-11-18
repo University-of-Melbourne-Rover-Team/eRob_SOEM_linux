@@ -16,3 +16,19 @@ bool sdo_write(uint16 slave, uint16 index, uint8 subindex, int size, void *data)
     }
     return false;
 }
+
+bool sdo_read(uint16 slave, uint16 index, uint8 subindex, int size, void *data) {
+    // ec_SDOread updates read_size to the number of bytes the slave returned
+    int read_size = size;
+    int wkc = ec_SDOread(slave, index, subindex, FALSE, &read_size, data, EC_TIMEOUTSAFE);
+    if (wkc > 0 && read_size == size) {
+        return true;
+    }
+
+    printf("ERROR: SDO read failed: slave %d, 0x%04x:%02x (expected %d bytes, got %d)\n",
+           slave, index, subindex, size, wkc > 0 ? read_size : 0);
+    while (ec_iserror()) {
+        printf("       %s", ec_elist2string());
+    }
+    return false;
+}

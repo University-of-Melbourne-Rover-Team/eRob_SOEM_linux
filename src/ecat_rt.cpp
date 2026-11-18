@@ -11,6 +11,7 @@
 #include "config.h"
 #include "ecat_master.h"
 #include "rt_utils.h"
+#include "sdo.h"
 #include "utils.h"
 #include "trajectory.h"
 
@@ -25,6 +26,12 @@ cia402_motor_t motors[config::MAX_MOTORS + 1];
 
 // per-slave OP status, true = slave in OP
 std::atomic<bool> slave_in_op[config::MAX_MOTORS + 1];
+
+// set by RT thread when a drive enters fault, cleared by check thread once the error code is read
+std::atomic<bool> error_code_request[config::MAX_MOTORS + 1];
+
+// true while the drive reports fault reaction active or fault (RT thread only)
+bool drive_fault[config::MAX_MOTORS + 1];
 
 // Cyclic sync position control data structures
 trajectory_t trajectories[config::MAX_MOTORS + 1];
@@ -64,6 +71,13 @@ void update_motors(double cycle_time_s) {
         if (!motor_faulted && motors[slave].faulted) {
             printf("FAULT: Slave %d, SW=0x%04x\n", slave, motors[slave].txpdo.statusword);
         }
+
+        // drive just entered fault: ask check thread to read the error code
+        bool in_fault = motors[slave].state == FAULT || motors[slave].state == FAULT_REACTION_ACTIVE;
+        if (in_fault && !drive_fault[slave]) {
+            error_code_request[slave].store(true, std::memory_order_relaxed);
+        }
+        drive_fault[slave] = in_fault;
 
         // set targets
         cia402_motor_t &motor = motors[slave];
@@ -250,6 +264,37 @@ void recover_slave(int slave, bool report) {
 }
 
 /**
+ * Reads and prints error code 0x603F for every slave the RT thread flagged as faulted
+ * Runs in the check thread so all mailbox traffic stays in one thread
+ */
+void report_error_codes() {
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        if (!error_code_request[slave].exchange(false, std::memory_order_relaxed)) {
+            continue;
+        }
+
+        uint16_t error_code = 0;
+        if (sdo_read_value(slave, INDEX_ERROR_CODE, 0x00, &error_code)) {
+            printf("FAULT: Slave %d error code 0x%04X\n", slave, error_code);
+        }
+
+        // error code already cleared: fall back to the most recent entry in the error history
+        if (error_code == 0) {
+            uint32_t last_error = 0;
+            if (sdo_read_value(slave, INDEX_ERROR_HISTORY, 0x01, &last_error)) {
+                printf("FAULT: Slave %d last error history entry 0x%08X (error code 0x%04X)\n",
+                       slave, last_error, last_error & 0xFFFFU);
+            }
+        }
+
+        // emergency (EMCY) messages received during the mailbox read are on the SOEM error list
+        while (ec_iserror()) {
+            printf("       %s", ec_elist2string());
+        }
+    }
+}
+
+/**
  * EtherCAT bus check thread
  * Monitors working counter and slave states, publishes slave OP status to RT thread
  * attempts to recover slaves that are not operational
@@ -280,6 +325,8 @@ void *ecatcheck(void *ptr) {
             consecutive_errors = 0;
             monitoring = true;
         }
+
+        report_error_codes();
 
         // monitor working counter
         int current_wkc = wkc;
