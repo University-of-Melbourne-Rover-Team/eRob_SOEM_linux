@@ -21,6 +21,7 @@ constexpr const char *DEFAULT_IF_NAME = "enp89s0";  // if_name of NUC
 // EtherCAT cycle time; SYNC0 is configured with the same period
 constexpr int CYCLE_TIME_US = 1000; // PDO's exchanged periodically every 1000us = 1ms
 constexpr uint32_t SYNC0_CYCLE_NS = CYCLE_TIME_US * 1000;
+constexpr int32_t SYNC0_SHIFT_NS = SYNC0_CYCLE_NS / 2;
 
 // Upper bound on slaves handled by the maindevice
 constexpr int MAX_MOTORS = 16;
@@ -47,7 +48,7 @@ constexpr int WKC_REPORT_INTERVAL = 100; // wkc error warning interval
 // CiA 402 mode of operation for each motor in bus order (entry 0 = slave 1)
 // must list exactly one entry per slave on bus, otherwise program fails
 // MODE_CSV and MODE_CSP supported
-constexpr int8_t MOTOR_MODES[] = {MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV};
+constexpr int8_t MOTOR_MODES[] = {MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSV, MODE_CSP, MODE_CSV};
 constexpr int NUM_MOTORS = static_cast<int>(std::size(MOTOR_MODES));
 
 constexpr bool motor_modes_supported() {
@@ -83,7 +84,7 @@ static_assert(CSP_PROFILE_ACCELERATION > 0 && CSP_PROFILE_ACCELERATION <= MAX_AC
               "CSP_PROFILE_ACCELERATION must be > 0 and <= drive MAX_ACCELERATION");
 
 // demo values
-constexpr double DEMO_CSP_SWING_DEG[] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+constexpr double DEMO_CSP_SWING_DEG[] = {0.0, 0.0, 0.0, 0.0, 90.0, 0.0};
 static_assert(std::size(DEMO_CSP_SWING_DEG) == NUM_MOTORS, "DEMO_CSP_SWING_DEG is wrong size");
 constexpr double DEMO_CSV_VELOCITY_DEG[] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 static_assert(std::size(DEMO_CSV_VELOCITY_DEG) == NUM_MOTORS, "DEMO_CSV_VELOCITY_DEG is wrong size");

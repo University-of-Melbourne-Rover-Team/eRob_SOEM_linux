@@ -124,7 +124,7 @@ bool ecat_config_map_and_dc() {
     ec_configdc();
     for (int i = 1; i <= ec_slavecount; i++) {
         if (ec_slave[i].hasdc) {
-            ecx_dcsync0(&ecx_context, i, TRUE, config::SYNC0_CYCLE_NS, 0);
+            ecx_dcsync0(&ecx_context, i, TRUE, config::SYNC0_CYCLE_NS, config::SYNC0_SHIFT_NS);
         }
     }
     osal_usleep(200000); // wait for DC configuration to take effect
