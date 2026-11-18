@@ -35,12 +35,17 @@ bool drive_fault[config::MAX_MOTORS + 1];
 
 // Cyclic sync position control data structures
 trajectory_t trajectories[config::MAX_MOTORS + 1];
-const trajectory_limits_t CSP_LIMITS = {config::CSP_MAX_VELOCITY, config::CSP_MAX_ACCELERATION};
+const trajectory_limits_t CSP_LIMITS = {config::CSP_PROFILE_VELOCITY, config::CSP_PROFILE_ACCELERATION};
+
+// DEMONSTRATION ONLY
+int32_t start_pos[config::MAX_MOTORS + 1];  // position each motor started in
 
 /**
  * Updates connection state, CiA 402 state machine and targets for every motor (one RT cycle)
  */
-void update_motors(double cycle_time_s) {
+void update_motors(double cycle_time_ns) {
+
+    double cycle_time_s = cycle_time_ns / 1e9;
     /**
      * Check the connection status of each slave on the bus using working counter
      * Each slave expected to increment working counter 3 times each
@@ -84,20 +89,25 @@ void update_motors(double cycle_time_s) {
         trajectory_t &trajectory = trajectories[slave];
         if (!motor.operation_enabled) {
             trajectory_reset(&trajectory, motor.txpdo.actual_position);
+            start_pos[slave] = motor.txpdo.actual_position; // demo
             motor.rxpdo.target_velocity = 0;
             motor.rxpdo.target_position = motor.txpdo.actual_position;
         }
         else if (motor.rxpdo.mode_of_operation == MODE_CSP) {
+            /**
+             * DEMONSTRATION PURPOSE ONLY
+             * A CSP motor will swing back and forth between two setpoints
+             */
             if (trajectory_goal_reached(&trajectory)) {
-                int32_t current_pos = trajectory.position;
-                int32_t target_pos = current_pos + angle2count(config::DEMO_TARGET_POSITION);
+                int32_t end_pos = start_pos[slave] + angle2count(config::DEMO_CSP_SWING_DEG[slave-1]);
+                int32_t target_pos = (trajectory.goal == end_pos) ? start_pos[slave] : end_pos;
                 trajectory_set_goal(&trajectory, target_pos);
             }
             motor.rxpdo.target_position = trajectory_step(&trajectory, &CSP_LIMITS, cycle_time_s);
             motor.rxpdo.target_velocity = 0;    // unused in CSP
         }
         else if (motor.rxpdo.mode_of_operation == MODE_CSV) {
-            motor.rxpdo.target_velocity = config::DEMO_TARGET_VELOCITY;
+            motor.rxpdo.target_velocity = angle2count(config::DEMO_CSV_VELOCITY_DEG[slave-1]);
             motor.rxpdo.target_position = motor.txpdo.actual_position;  // unused in CSV
         }
 
@@ -130,12 +140,12 @@ void print_motors() {
 
         // CSP motor print
         else if (motors[slave].rxpdo.mode_of_operation == MODE_CSP) {
-            printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_pos=%d, target_reached=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+            printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_pos=%.2f, target_reached=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
                motors[slave].txpdo.statusword,
                motors[slave].rxpdo.controlword,
                count2angle(motors[slave].txpdo.actual_position),
                count2angle(motors[slave].txpdo.actual_velocity),
-               trajectories[slave].goal,
+               count2angle(trajectories[slave].goal),
                trajectory_goal_reached(&trajectories[slave]),
                cia402_mode2string(motors[slave].rxpdo.mode_of_operation),
                motors[slave].faulted,
