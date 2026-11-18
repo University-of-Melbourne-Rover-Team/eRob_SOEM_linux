@@ -1,18 +1,6 @@
 # URT Motion Planning Notes
 
 ### Parameters
-```C
-struct MotionPlanner {
-    bool initialized = false;
-    int32_t target_position = 0;
-    double current_position = 0.0; // Keep fractional counts between cycles.
-    double current_velocity = 0.0;
-
-    static constexpr double MAX_VELOCITY = 50000.0;     // counts/s
-    static constexpr double MAX_ACCELERATION = 50000.0; // counts/s^2
-    static constexpr double BRAKE_DECEL = 5000.0;       // counts/s^2
-};
-```
 - `MAX_VELOCITY`: $v_{max}$
 - `MAX_ACCELERATION`: $a_{max}$
 - `BRAKE_DECEL`: $d_{brake}$
@@ -20,7 +8,10 @@ struct MotionPlanner {
 - $n$: current discrete time step
 
 ## Cyclic Sync Position (CSP) Trajectory planning
-Position motion control using discrete time trapezoidal velocity profile.  
+Position motion control using discrete time trapezoidal velocity profile (below). Implemented in `~/src/trajectory.cpp`.
+  
+![Trapezoidal Velocity Profile](images/trapezoidal_velocity_profile.png)
+
 ### 1. Calculate position error, $E$
 
 $e_n = r - y_n$
