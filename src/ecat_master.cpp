@@ -33,6 +33,18 @@ bool ecat_init(const char *if_name) {
         ec_close();
         return false;
     }
+
+    if (ec_slavecount != config::NUM_MOTORS) {
+        printf("ERROR: %d slaves found. config::MOTOR_MODES lists %d motors\n", ec_slavecount, config::NUM_MOTORS);
+        ec_close();
+        return false;
+    }
+
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        printf("LOG: Slave %d: %s, mode %s\n", slave, ec_slave[slave].name,
+            config::MOTOR_MODES[slave-1] == MODE_CSP ? "CSP" : "CSV");
+    }
+
     return true;
 }
 
@@ -58,11 +70,11 @@ bool ecat_request_preop() {
 
 bool ecat_map_pdos() {
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        if (!pdo_map_csv_rxpdo(slave)) {
+        if (!pdo_map_rxpdo(slave)) {
             printf("ERROR: Slave %d RXPDO mapping failed\n", slave);
             return false;
         }
-        if (!pdo_map_csv_txpdo(slave)) {
+        if (!pdo_map_txpdo(slave)) {
             printf("ERROR: Slave %d TXPDO mapping failed\n", slave);
             return false;
         }
@@ -73,10 +85,10 @@ bool ecat_map_pdos() {
 
 bool ecat_configure_drives() {
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        bool ok = sdo_write_value<int32_t>(slave, INDEX_MAX_VELOCITY, 0x00, config::MAX_VELOCITY) &&
+        bool ret = sdo_write_value<int32_t>(slave, INDEX_MAX_VELOCITY, 0x00, config::MAX_VELOCITY) &&
                   sdo_write_value<int32_t>(slave, INDEX_MAX_ACCELERATION, 0x00, config::MAX_ACCELERATION) &&
                   sdo_write_value<int32_t>(slave, INDEX_QUICK_STOP_DECEL, 0x00, config::QUICK_STOP_DECEL);
-        if (!ok) {
+        if (!ret) {
             printf("ERROR: Slave %d drive parameter configuration failed\n", slave);
             return false;
         }

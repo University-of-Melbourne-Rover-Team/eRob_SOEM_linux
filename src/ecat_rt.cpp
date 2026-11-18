@@ -11,6 +11,9 @@
 #include "config.h"
 #include "ecat_master.h"
 #include "rt_utils.h"
+#include "sdo.h"
+#include "utils.h"
+#include "trajectory.h"
 
 namespace {
 
@@ -24,10 +27,25 @@ cia402_motor_t motors[config::MAX_MOTORS + 1];
 // per-slave OP status, true = slave in OP
 std::atomic<bool> slave_in_op[config::MAX_MOTORS + 1];
 
+// set by RT thread when a drive enters fault, cleared by check thread once the error code is read
+std::atomic<bool> error_code_request[config::MAX_MOTORS + 1];
+
+// true while the drive reports fault reaction active or fault (RT thread only)
+bool drive_fault[config::MAX_MOTORS + 1];
+
+// Cyclic sync position control data structures
+trajectory_t trajectories[config::MAX_MOTORS + 1];
+const trajectory_limits_t CSP_LIMITS = {config::CSP_PROFILE_VELOCITY, config::CSP_PROFILE_ACCELERATION};
+
+// DEMONSTRATION ONLY
+int32_t start_pos[config::MAX_MOTORS + 1];  // position each motor started in
+
 /**
  * Updates connection state, CiA 402 state machine and targets for every motor (one RT cycle)
  */
-void update_motors() {
+void update_motors(double cycle_time_ns) {
+
+    double cycle_time_s = cycle_time_ns / 1e9;
     /**
      * Check the connection status of each slave on the bus using working counter
      * Each slave expected to increment working counter 3 times each
@@ -38,6 +56,7 @@ void update_motors() {
         // motor just disconnected (falling edge)
         if (motors[slave].ec_connected && !slave_connected) {
             cia402_lost_motor(&motors[slave]);
+            memcpy(ec_slave[slave].outputs, &(motors[slave].rxpdo), sizeof(rxpdo_t));
         }
         motors[slave].ec_connected = slave_connected;
     }
@@ -58,11 +77,38 @@ void update_motors() {
             printf("FAULT: Slave %d, SW=0x%04x\n", slave, motors[slave].txpdo.statusword);
         }
 
-        // set target velocities
-        if (motors[slave].operation_enabled) {
-            motors[slave].rxpdo.target_velocity = config::DEMO_TARGET_VELOCITY;
-        } else {
-            motors[slave].rxpdo.target_velocity = 0;
+        // drive just entered fault: ask check thread to read the error code
+        bool in_fault = motors[slave].state == FAULT || motors[slave].state == FAULT_REACTION_ACTIVE;
+        if (in_fault && !drive_fault[slave]) {
+            error_code_request[slave].store(true, std::memory_order_relaxed);
+        }
+        drive_fault[slave] = in_fault;
+
+        // set targets
+        cia402_motor_t &motor = motors[slave];
+        trajectory_t &trajectory = trajectories[slave];
+        if (!motor.operation_enabled) {
+            trajectory_reset(&trajectory, motor.txpdo.actual_position);
+            start_pos[slave] = motor.txpdo.actual_position; // demo
+            motor.rxpdo.target_velocity = 0;
+            motor.rxpdo.target_position = motor.txpdo.actual_position;
+        }
+        else if (motor.rxpdo.mode_of_operation == MODE_CSP) {
+            /**
+             * DEMONSTRATION PURPOSE ONLY
+             * A CSP motor will swing back and forth between two setpoints
+             */
+            if (trajectory_goal_reached(&trajectory)) {
+                int32_t end_pos = start_pos[slave] + angle2count(config::DEMO_CSP_SWING_DEG[slave-1]);
+                int32_t target_pos = (trajectory.goal == end_pos) ? start_pos[slave] : end_pos;
+                trajectory_set_goal(&trajectory, target_pos);
+            }
+            motor.rxpdo.target_position = trajectory_step(&trajectory, &CSP_LIMITS, cycle_time_s);
+            motor.rxpdo.target_velocity = 0;    // unused in CSP
+        }
+        else if (motor.rxpdo.mode_of_operation == MODE_CSV) {
+            motor.rxpdo.target_velocity = angle2count(config::DEMO_CSV_VELOCITY_DEG[slave-1]);
+            motor.rxpdo.target_position = motor.txpdo.actual_position;  // unused in CSV
         }
 
         // copy RXPDO data from local array to SOEM array
@@ -77,16 +123,35 @@ void update_motors() {
 void print_motors() {
     printf("WKC: %d | expected WKC: %d\n", wkc, expectedWKC);
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%d, vel=%d, target_vel=%d, mode=%d, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+        
+        // CSV motor print
+        if (motors[slave].rxpdo.mode_of_operation == MODE_CSV) {
+            printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_vel=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
                motors[slave].txpdo.statusword,
                motors[slave].rxpdo.controlword,
-               motors[slave].txpdo.actual_position,
-               motors[slave].txpdo.actual_velocity,
+               count2angle(motors[slave].txpdo.actual_position),
+               count2angle(motors[slave].txpdo.actual_velocity),
                motors[slave].rxpdo.target_velocity,
-               motors[slave].rxpdo.mode_of_operation,
+               cia402_mode2string(motors[slave].rxpdo.mode_of_operation),
                motors[slave].faulted,
                motors[slave].operation_enabled,
                motors[slave].ec_connected);
+        }
+
+        // CSP motor print
+        else if (motors[slave].rxpdo.mode_of_operation == MODE_CSP) {
+            printf("Motor %d: SW=0x%04x, CW=0x%04x, pos=%.2f, vel=%.2f, target_pos=%.2f, target_reached=%d, mode=%s, fault=%d, op_en=%d, ec_connected=%d\n", slave,
+               motors[slave].txpdo.statusword,
+               motors[slave].rxpdo.controlword,
+               count2angle(motors[slave].txpdo.actual_position),
+               count2angle(motors[slave].txpdo.actual_velocity),
+               count2angle(trajectories[slave].goal),
+               trajectory_goal_reached(&trajectories[slave]),
+               cia402_mode2string(motors[slave].rxpdo.mode_of_operation),
+               motors[slave].faulted,
+               motors[slave].operation_enabled,
+               motors[slave].ec_connected);
+        }
     }
     printf("\n");
 }
@@ -115,7 +180,7 @@ void *ecatthread(void *ptr) {
 
     // configure motors on startup
     for (int slave = 1; slave <= ec_slavecount; slave++) {
-        cia402_init_motor(&motors[slave], config::OPERATION_MODE);
+        cia402_init_motor(&motors[slave], config::MOTOR_MODES[slave-1]);
     }
 
     // send initial RXPDO data
@@ -148,7 +213,7 @@ void *ecatthread(void *ptr) {
         cycle_count++;
 
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        update_motors();
+        update_motors((double) cycletime);
 
         if (cycle_count % config::TELEMETRY_PRINT_INTERVAL == 0) {
             print_motors();
@@ -209,6 +274,37 @@ void recover_slave(int slave, bool report) {
 }
 
 /**
+ * Reads and prints error code 0x603F for every slave the RT thread flagged as faulted
+ * Runs in the check thread so all mailbox traffic stays in one thread
+ */
+void report_error_codes() {
+    for (int slave = 1; slave <= ec_slavecount; slave++) {
+        if (!error_code_request[slave].exchange(false, std::memory_order_relaxed)) {
+            continue;
+        }
+
+        uint16_t error_code = 0;
+        if (sdo_read_value(slave, INDEX_ERROR_CODE, 0x00, &error_code)) {
+            printf("FAULT: Slave %d error code 0x%04X\n", slave, error_code);
+        }
+
+        // error code already cleared: fall back to the most recent entry in the error history
+        if (error_code == 0) {
+            uint32_t last_error = 0;
+            if (sdo_read_value(slave, INDEX_ERROR_HISTORY, 0x01, &last_error)) {
+                printf("FAULT: Slave %d last error history entry 0x%08X (error code 0x%04X)\n",
+                       slave, last_error, last_error & 0xFFFFU);
+            }
+        }
+
+        // emergency (EMCY) messages received during the mailbox read are on the SOEM error list
+        while (ec_iserror()) {
+            printf("       %s", ec_elist2string());
+        }
+    }
+}
+
+/**
  * EtherCAT bus check thread
  * Monitors working counter and slave states, publishes slave OP status to RT thread
  * attempts to recover slaves that are not operational
@@ -217,7 +313,7 @@ void *ecatcheck(void *ptr) {
     (void) ptr;
     const int CHECK_PERIOD_MS = config::CHECK_PERIOD_US / 1000;
     int consecutive_errors = 0;
-    int healthy_polls = 0;
+    // int healthy_polls = 0;
     bool monitoring = false;
     uint16_t last_state[config::MAX_MOTORS + 1] = {};
 
@@ -239,6 +335,8 @@ void *ecatcheck(void *ptr) {
             consecutive_errors = 0;
             monitoring = true;
         }
+
+        report_error_codes();
 
         // monitor working counter
         int current_wkc = wkc;
@@ -269,7 +367,7 @@ void *ecatcheck(void *ptr) {
             // }
             continue;
         }
-        healthy_polls = 0;
+        // healthy_polls = 0;
 
         bool any_out_before = ec_group[currentgroup].docheckstate;
         ec_group[currentgroup].docheckstate = FALSE;

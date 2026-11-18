@@ -6,6 +6,8 @@ add_executable(main
     pdo.cpp
     sdo.cpp
     rt_utils.cpp
+    utils.cpp
+    trajectory.cpp
 )
 target_link_libraries(main PRIVATE cia402 soem Threads::Threads)
 target_compile_options(main PRIVATE -Wall -Wextra)
