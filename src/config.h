@@ -91,6 +91,13 @@ static_assert(CSP_PROFILE_VELOCITY > 0 && CSP_PROFILE_VELOCITY <= MAX_VELOCITY,
 static_assert(CSP_PROFILE_ACCELERATION > 0 && CSP_PROFILE_ACCELERATION <= MAX_ACCELERATION,
               "CSP_PROFILE_ACCELERATION must be > 0 and <= drive MAX_ACCELERATION");
 
+// CSV ramp profile values used by trajectory planner
+constexpr double CSV_PROFILE_ACCEL_DEG = 20.0;  // deg/s^2
+constexpr double CSV_PROFILE_ACCEL = CSV_PROFILE_ACCEL_DEG / EROB_DEG_PER_COUNT;    // counts/s^2
+
+static_assert(CSV_PROFILE_ACCEL > 0 && CSV_PROFILE_ACCEL <= MAX_ACCELERATION,
+            "CSV_PROFILE_ACCEL must be > 0 and <= drive MAX_ACCELERATION");
+
 // demo values
 constexpr double DEMO_CSP_SWING_DEG[] = {0.0, 0.0, 0.0, 0.0, 90.0, 0.0};
 static_assert(std::size(DEMO_CSP_SWING_DEG) == NUM_MOTORS, "DEMO_CSP_SWING_DEG is wrong size");

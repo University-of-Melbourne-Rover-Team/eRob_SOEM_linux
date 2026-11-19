@@ -34,8 +34,12 @@ std::atomic<bool> error_code_request[config::MAX_MOTORS + 1];
 bool drive_fault[config::MAX_MOTORS + 1];
 
 // Cyclic sync position control data structures
-trajectory_t trajectories[config::MAX_MOTORS + 1];
-const trajectory_limits_t CSP_LIMITS = {config::CSP_PROFILE_VELOCITY, config::CSP_PROFILE_ACCELERATION};
+csp_trajectory_t csp_trajectories[config::MAX_MOTORS + 1];
+const csp_trajectory_limits_t CSP_LIMITS = {config::CSP_PROFILE_VELOCITY, config::CSP_PROFILE_ACCELERATION};
+
+// Cyclic sync velocity control data structures
+csv_trajectory_t csv_trajectories[config::MAX_MOTORS + 1];
+const csv_trajectory_limits_t CSV_LIMITS = {config::MAX_VELOCITY, config::CSV_PROFILE_ACCEL};
 
 // DEMONSTRATION ONLY
 int32_t start_pos[config::MAX_MOTORS + 1];  // position each motor started in
@@ -84,30 +88,39 @@ void update_motors(double cycle_time_ns) {
         }
         drive_fault[slave] = in_fault;
 
-        // set targets
         cia402_motor_t &motor = motors[slave];
-        trajectory_t &trajectory = trajectories[slave];
+        csp_trajectory_t &csp_trajectory = csp_trajectories[slave];
+        csv_trajectory_t &csv_trajectory = csv_trajectories[slave];
+
+        // set targets
         if (!motor.operation_enabled) {
-            trajectory_reset(&trajectory, motor.txpdo.actual_position);
-            start_pos[slave] = motor.txpdo.actual_position; // demo
+            csp_trajectory_reset(&csp_trajectory, motor.txpdo.actual_position);
+            csv_trajectory_reset(&csv_trajectory);
             motor.rxpdo.target_velocity = 0;
             motor.rxpdo.target_position = motor.txpdo.actual_position;
+
+            start_pos[slave] = motor.txpdo.actual_position; // demo
         }
         else if (motor.rxpdo.mode_of_operation == MODE_CSP) {
             /**
              * DEMONSTRATION PURPOSE ONLY
              * A CSP motor will swing back and forth between two setpoints
              */
-            if (trajectory_goal_reached(&trajectory)) {
+            if (csp_trajectory_goal_reached(&csp_trajectory)) {
                 int32_t end_pos = start_pos[slave] + angle2count(config::DEMO_CSP_SWING_DEG[slave-1]);
-                int32_t target_pos = (trajectory.goal == end_pos) ? start_pos[slave] : end_pos;
-                trajectory_set_goal(&trajectory, target_pos);
+                int32_t target_pos = (csp_trajectory.goal == end_pos) ? start_pos[slave] : end_pos;
+                csp_trajectory_set_goal(&csp_trajectory, target_pos);
             }
-            motor.rxpdo.target_position = trajectory_step(&trajectory, &CSP_LIMITS, cycle_time_s);
+            motor.rxpdo.target_position = csp_trajectory_step(&csp_trajectory, &CSP_LIMITS, cycle_time_s);
             motor.rxpdo.target_velocity = 0;    // unused in CSP
         }
         else if (motor.rxpdo.mode_of_operation == MODE_CSV) {
-            motor.rxpdo.target_velocity = angle2count(config::DEMO_CSV_VELOCITY_DEG[slave-1]);
+            /**
+             * DEMONSTRATION PURPOSE ONLY
+             * A CSV motor will ramp up and to a constant velocity then stay
+             */
+            csv_trajectory_set_goal(&csv_trajectory, angle2count(config::DEMO_CSV_VELOCITY_DEG[slave-1]));
+            motor.rxpdo.target_velocity = csv_trajectory_step(&csv_trajectory, &CSV_LIMITS, cycle_time_s);
             motor.rxpdo.target_position = motor.txpdo.actual_position;  // unused in CSV
         }
 
@@ -145,8 +158,8 @@ void print_motors() {
                motors[slave].rxpdo.controlword,
                count2angle(motors[slave].txpdo.actual_position),
                count2angle(motors[slave].txpdo.actual_velocity),
-               count2angle(trajectories[slave].goal),
-               trajectory_goal_reached(&trajectories[slave]),
+               count2angle(csp_trajectories[slave].goal),
+               csp_trajectory_goal_reached(&csp_trajectories[slave]),
                cia402_mode2string(motors[slave].rxpdo.mode_of_operation),
                motors[slave].faulted,
                motors[slave].operation_enabled,
