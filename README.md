@@ -24,7 +24,7 @@ To verify linkstate, run:
 ```bash
 ethtool <if_name>
 ```
-If the EtherCAT cable is connected, it should output `Link detected: yes`
+If the EtherCAT cable is connected, it should output `Link detected: yes`. (Note EtherCAT cable is just an Ethernet cable)
 
 2. **Build executables:**
 ```bash
